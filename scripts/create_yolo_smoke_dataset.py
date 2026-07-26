@@ -99,8 +99,8 @@ class YoloBox:
 
     def line(self) -> str:
         return (
-            f"{self.class_id} {self.x_center:.10f} {self.y_center:.10f} "
-            f"{self.width:.10f} {self.height:.10f}"
+            f"{self.class_id} {self.x_center:.15f} {self.y_center:.15f} "
+            f"{self.width:.15f} {self.height:.15f}"
         )
 
 
