@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import importlib.util
 import json
+import sqlite3
 import sys
 import zipfile
 from pathlib import Path
@@ -63,6 +65,52 @@ def label_json(image_filename: str = "sample.jpg", species: str = "느타리") -
     return b"\xef\xbb\xbf" + json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
 
+def full_label_json(
+    *,
+    image_filename: str,
+    species: str = "느타리",
+    camera_id: int | None = 1,
+    capture_date: str | None = "2021-11-01",
+    capture_time: str | None = "12:00:00",
+    temperature: float | None = 20.0,
+    humidity: float | None = 80.0,
+    co2: float | None = 1000.0,
+    illumination: float | None = 0.0,
+    annotations: list[dict[str, object]] | None = None,
+    normality: bool | None = True,
+    disease: str | None = None,
+    extra_info: dict[str, object] | None = None,
+) -> bytes:
+    info: dict[str, object] = {
+        "DATASET_NAME": f"{species} 버섯(생육)",
+        "CATEGORY_NAME": species,
+        "CONTRIBUTOR": "",
+    }
+    info.update(extra_info or {})
+    payload = {
+        "INFO": info,
+        "IMAGE": {"IMAGE_FILE_NAME": image_filename},
+        "ANNOTATION_INFO": annotations if annotations is not None else [],
+        "META": {
+            "DBYHS_SPCHCKN": disease,
+            "DBYHS_NORMALITY_ALTERNATIVE": normality,
+            "IP_CAMERA_ID": camera_id,
+            "TEMPERATURE": temperature,
+            "HUMIDITY": humidity,
+            "ILLUMINATION_INTENSITY": illumination,
+            "CARBON_DIOXIDE": co2,
+            "IMAGE_CREATE_DATE": capture_date,
+            "IMAGE_CREATE_TIME": capture_time,
+            "STIPE_LENGTH": None,
+            "STIPE_THICKNESS": None,
+            "PILEUS_DIAMETER": None,
+            "PILEUS_THICKNESS": None,
+            "GROSS_WEIGHT": None,
+        },
+    }
+    return b"\xef\xbb\xbf" + json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+
 def archive_ref(
     path: Path,
     *,
@@ -98,6 +146,7 @@ def test_cli_defaults_are_lightweight() -> None:
     assert args.sample_image_pairs == 0
     assert args.check_zip_integrity is False
     assert args.extract_samples is False
+    assert args.scan_all_json is False
 
 
 @pytest.mark.parametrize("value", ["-1", "21", "x"])
@@ -214,11 +263,12 @@ def test_output_inside_source_tree_is_rejected(tmp_path: Path) -> None:
 
 
 def test_end_to_end_reports_with_synthetic_archives(tmp_path: Path) -> None:
+    dataset_root = tmp_path / "dataset_root"
     directories = {
-        "TRAIN_LABEL_ARCHIVES": tmp_path / "train_labels",
-        "TRAIN_IMAGE_ARCHIVES": tmp_path / "train_images",
-        "VAL_LABEL_ARCHIVES": tmp_path / "val_labels",
-        "VAL_IMAGE_ARCHIVES": tmp_path / "val_images",
+        "TRAIN_LABEL_ARCHIVES": dataset_root / "train_labels",
+        "TRAIN_IMAGE_ARCHIVES": dataset_root / "train_images",
+        "VAL_LABEL_ARCHIVES": dataset_root / "val_labels",
+        "VAL_IMAGE_ARCHIVES": dataset_root / "val_images",
     }
     species_names = ("느타리", "양송이", "큰느타리", "팽이", "표고")
     for index, species in enumerate(species_names, start=1):
@@ -253,10 +303,9 @@ def test_end_to_end_reports_with_synthetic_archives(tmp_path: Path) -> None:
         sample_image_pairs=1,
         check_zip_integrity=False,
         extract_samples=False,
+        scan_all_json=False,
         output_dir=output_dir,
     )
-    dataset_root = tmp_path / "dataset_root"
-    dataset_root.mkdir()
     environ = {
         "MUSHROOM_DATASET": str(dataset_root),
         **{key: str(value) for key, value in directories.items()},
@@ -280,3 +329,303 @@ def test_end_to_end_reports_with_synthetic_archives(tmp_path: Path) -> None:
     )
     pairing = (output_dir / "archive_pairing.md").read_text()
     assert pairing.count("| ok |") == 10
+    inventory = (output_dir / "archive_inventory.csv").read_text(
+        encoding="utf-8-sig"
+    )
+    dataset_report = (output_dir / "dataset_inventory.md").read_text()
+    assert str(tmp_path) not in inventory
+    assert str(tmp_path) not in dataset_report
+    assert "${MUSHROOM_DATASET}/" in inventory
+
+
+def test_full_json_streaming_aggregates_and_handles_corruption(
+    tmp_path: Path,
+) -> None:
+    bbox = {
+        "BOUNDING_BOX_X_COORDINATE": 0,
+        "BOUNDING_BOX_Y_COORDINATE": 2,
+        "BOUNDING_BOX_WIDTH": 3,
+        "BOUNDING_BOX_HEIGHT": 4,
+        "SEGMENTATION": None,
+    }
+    no_bbox_non_null_segmentation = {"SEGMENTATION": []}
+    null_segmentation = {"SEGMENTATION": None}
+    label_path = tmp_path / "TL1_느타리.zip"
+    write_zip(
+        label_path,
+        {
+            "생육/zero.json": full_label_json(
+                image_filename="zero.jpg",
+                temperature=0.0,
+                humidity=None,
+                annotations=[bbox, no_bbox_non_null_segmentation],
+                extra_info={"FARM_ID": "farm-candidate"},
+            ),
+            "생육/ten.json": full_label_json(
+                image_filename="ten.jpg",
+                temperature=10.0,
+                humidity=50.0,
+                annotations=[],
+            ),
+            "병해/null.json": full_label_json(
+                image_filename="null.jpg",
+                temperature=None,
+                humidity=0.0,
+                annotations=[null_segmentation],
+                normality=False,
+                disease="테스트병",
+            ),
+            "병해/broken.json": b"{broken json",
+        },
+    )
+    inspection = inspector.inspect_archive(archive_ref(label_path))
+    result = inspector.scan_all_label_json(
+        [inspection],
+        checkpoint_dir=tmp_path / "artifacts" / "checkpoints",
+        database_path=tmp_path / "artifacts" / "scan.sqlite3",
+        checkpoint_interval=2,
+        show_progress=False,
+    )
+
+    stats = result.stats
+    assert result.complete is True
+    assert stats.attempted_json == 4
+    assert stats.processed_json == 3
+    assert stats.failed_json == 1
+    assert stats.numeric["temperature"].present == 2
+    assert stats.numeric["temperature"].missing == 1
+    assert stats.numeric["temperature"].minimum == 0.0
+    assert stats.numeric["temperature"].mean == 5.0
+    assert stats.numeric["temperature"].maximum == 10.0
+    assert stats.numeric["humidity"].present == 2
+    assert stats.numeric["humidity"].missing == 1
+    assert stats.numeric["humidity"].minimum == 0.0
+    assert stats.numeric["humidity"].mean == 25.0
+    assert stats.bbox_document_counts == {"present": 1, "missing": 2}
+    assert stats.annotation_count_distribution == {2: 1, 0: 1, 1: 1}
+    assert stats.segmentation_document_counts == {
+        "non_null": 1,
+        "missing": 1,
+        "null": 1,
+    }
+    assert stats.normality_counts["abnormal"] == 1
+    assert stats.disease_counts["테스트병"] == 1
+    assert (
+        stats.candidate_fields["farm_or_facility_id"]["$.INFO.FARM_ID"]
+        .examples
+        == ["farm-candidate"]
+    )
+
+    leakage = inspector.analyze_data_leakage(result.database_path)
+    report_dir = tmp_path / "reports"
+    report_dir.mkdir()
+    inspector.write_full_scan_reports(report_dir, result, leakage)
+    expected_reports = {
+        "full_label_distribution.csv",
+        "full_field_completeness.csv",
+        "full_environment_statistics.csv",
+        "full_camera_date_distribution.csv",
+        "data_leakage_analysis.md",
+        "full_dataset_analysis.md",
+    }
+    assert {path.name for path in report_dir.iterdir()} == expected_reports
+    combined = "\n".join(
+        path.read_text(encoding="utf-8-sig")
+        for path in report_dir.iterdir()
+    )
+    assert str(tmp_path) not in combined
+    with (report_dir / "full_environment_statistics.csv").open(
+        encoding="utf-8-sig", newline=""
+    ) as handle:
+        environment_rows = {
+            row["field_key"]: row for row in csv.DictReader(handle)
+        }
+    assert environment_rows["temperature"]["minimum"] == "0.0"
+    assert environment_rows["temperature"]["mean"] == "5.0"
+    assert environment_rows["temperature"]["missing_count"] == "1"
+    assert (
+        environment_rows["temperature"]["analysis_scope"]
+        == "full_label_json"
+    )
+    assert environment_rows["temperature"]["image_bytes_read"] == "False"
+    assert (
+        environment_rows["temperature"]["full_zip_crc_checked"] == "False"
+    )
+
+
+def test_full_scan_checkpoint_resume_skips_already_processed_json(
+    tmp_path: Path,
+) -> None:
+    label_path = tmp_path / "TL1_느타리.zip"
+    write_zip(
+        label_path,
+        {
+            "생육/one.json": full_label_json(image_filename="one.jpg"),
+            "생육/two.json": full_label_json(image_filename="two.jpg"),
+            "생육/three.json": full_label_json(image_filename="three.jpg"),
+        },
+    )
+    inspection = inspector.inspect_archive(archive_ref(label_path))
+    checkpoint_dir = tmp_path / "artifacts" / "checkpoints"
+    database_path = tmp_path / "artifacts" / "scan.sqlite3"
+
+    partial = inspector.scan_all_label_json(
+        [inspection],
+        checkpoint_dir=checkpoint_dir,
+        database_path=database_path,
+        checkpoint_interval=1,
+        show_progress=False,
+        stop_after=2,
+    )
+    assert partial.complete is False
+    assert partial.stats.processed_json == 2
+    checkpoint_path = checkpoint_dir / "full_json_scan_checkpoint.json"
+    partial_payload = json.loads(checkpoint_path.read_text())
+    assert partial_payload["status"] == "in_progress"
+    assert partial_payload["checkpoint_version"] == 1
+    assert partial_payload["settings"]["settings_version"] == 1
+    assert (
+        partial_payload["operational_settings"]["checkpoint_interval_json"]
+        == 1
+    )
+    assert not list(checkpoint_dir.glob("*.tmp-*"))
+
+    resumed = inspector.scan_all_label_json(
+        [inspection],
+        checkpoint_dir=checkpoint_dir,
+        database_path=database_path,
+        checkpoint_interval=1,
+        show_progress=False,
+    )
+    assert resumed.complete is True
+    assert resumed.resumed is True
+    assert resumed.resume_count == 1
+    assert resumed.stats.processed_json == 3
+    assert resumed.stats.attempted_json == 3
+    completed_payload = json.loads(checkpoint_path.read_text())
+    assert completed_payload["status"] == "complete"
+    assert len(completed_payload["completed_archives"]) == 1
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM label_records"
+        ).fetchone()[0] == 3
+
+    completed_rerun = inspector.scan_all_label_json(
+        [inspection],
+        checkpoint_dir=checkpoint_dir,
+        database_path=database_path,
+        checkpoint_interval=1,
+        show_progress=False,
+    )
+    assert completed_rerun.stats.processed_json == 3
+    assert completed_rerun.stats.attempted_json == 3
+
+
+def test_train_validation_leakage_detection_uses_sqlite(
+    tmp_path: Path,
+) -> None:
+    train_path = tmp_path / "TL1_느타리.zip"
+    validation_path = tmp_path / "VL1_느타리.zip"
+    write_zip(
+        train_path,
+        {
+            "생육/a.json": full_label_json(
+                image_filename="Exact.JPG", capture_time="12:00:00"
+            ),
+            "생육/b.json": full_label_json(
+                image_filename="stem_only.jpg", capture_time="13:00:00"
+            ),
+        },
+    )
+    write_zip(
+        validation_path,
+        {
+            "생육/c.json": full_label_json(
+                image_filename="exact.jpg", capture_time="12:00:00"
+            ),
+            "생육/d.json": full_label_json(
+                image_filename="stem_only.png", capture_time="14:00:00"
+            ),
+        },
+    )
+    train_ref = archive_ref(train_path)
+    validation_ref = archive_ref(
+        validation_path,
+        split="validation",
+        prefix="VL",
+    )
+    inspections = [
+        inspector.inspect_archive(train_ref),
+        inspector.inspect_archive(validation_ref),
+    ]
+    result = inspector.scan_all_label_json(
+        inspections,
+        checkpoint_dir=tmp_path / "checkpoints",
+        database_path=tmp_path / "leakage.sqlite3",
+        checkpoint_interval=1,
+        show_progress=False,
+    )
+    leakage = inspector.analyze_data_leakage(result.database_path)
+    assert leakage["image_filename"]["duplicate_key_count"] == 1
+    assert leakage["image_stem"]["duplicate_key_count"] == 2
+    assert leakage["capture_session"]["duplicate_key_count"] == 1
+    assert leakage["camera_date"]["duplicate_key_count"] == 1
+    assert leakage["camera_date"]["train_record_count"] == 2
+    assert leakage["camera_date"]["validation_record_count"] == 2
+
+
+def test_full_scan_never_reads_image_member_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    label_path = tmp_path / "TL1_느타리.zip"
+    image_path = tmp_path / "TS1_느타리.zip"
+    write_zip(
+        label_path,
+        {"생육/sample.json": full_label_json(image_filename="sample.jpg")},
+    )
+    write_zip(image_path, {"생육/sample.jpg": b"must-not-be-read"})
+    label_inspection = inspector.inspect_archive(archive_ref(label_path))
+    image_inspection = inspector.inspect_archive(
+        archive_ref(image_path, kind="image", prefix="TS")
+    )
+    assert image_inspection.image_count == 1
+
+    read_members: list[str] = []
+    original_read = zipfile.ZipFile.read
+
+    def guarded_read(
+        archive: zipfile.ZipFile, name: object, *args: object, **kwargs: object
+    ) -> bytes:
+        member_name = name.filename if isinstance(name, zipfile.ZipInfo) else str(name)
+        read_members.append(member_name)
+        assert not member_name.lower().endswith((".jpg", ".jpeg", ".png"))
+        return original_read(archive, name, *args, **kwargs)
+
+    monkeypatch.setattr(zipfile.ZipFile, "read", guarded_read)
+    result = inspector.scan_all_label_json(
+        [label_inspection],
+        checkpoint_dir=tmp_path / "checkpoints",
+        database_path=tmp_path / "scan.sqlite3",
+        checkpoint_interval=1,
+        show_progress=False,
+    )
+    assert result.complete is True
+    assert read_members == ["생육/sample.json"]
+
+
+def test_scan_all_json_rejects_crc_or_image_options() -> None:
+    with pytest.raises(SystemExit):
+        inspector.parse_args(["--scan-all-json", "--check-zip-integrity"])
+    with pytest.raises(SystemExit):
+        inspector.parse_args(
+            ["--scan-all-json", "--sample-image-pairs", "1"]
+        )
+    with pytest.raises(SystemExit):
+        inspector.parse_args(
+            [
+                "--scan-all-json",
+                "--sample-image-pairs",
+                "1",
+                "--extract-samples",
+            ]
+        )
