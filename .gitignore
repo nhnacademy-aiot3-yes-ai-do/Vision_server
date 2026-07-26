@@ -27,3 +27,11 @@ weights/
 # IDE
 .idea/
 .vscode/
+
+# Generated dataset manifests
+reports/detection_dataset_manifest.csv
+artifacts/detection_manifest.sqlite3
+
+# Generated dataset manifests
+reports/detection_dataset_manifest.csv
+artifacts/detection_manifest.sqlite3
