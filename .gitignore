@@ -1,0 +1,27 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+
+# Local environment
+.env
+
+# Local datasets
+data/
+dataset/
+datasets/
+
+# Generated reports and artifacts
+reports/*.csv
+artifacts/
+runs/
+weights/
+
+# Model files
+*.pt
+*.pth
+*.onnx
+
+# IDE
+.idea/
+.vscode/
