@@ -19,7 +19,7 @@ import zipfile
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Iterator, Mapping, Sequence
 
 from tqdm import tqdm
 
@@ -515,6 +515,36 @@ def assert_directory_unchanged(
         )
 
 
+def iter_selected_image_bytes(
+    selected: Sequence[Mapping[str, str]],
+    archive_lookup: Mapping[str, base.ArchiveRef],
+) -> Iterator[tuple[Mapping[str, str], bytes]]:
+    """Yield bytes for selected ZIP members only, using read-only archives."""
+    by_archive: dict[str, list[Mapping[str, str]]] = defaultdict(list)
+    for row in selected:
+        if row["split"] == "test":
+            raise RuntimeError("Test 이미지는 읽을 수 없습니다")
+        by_archive[row["image_archive_id"]].append(row)
+    for archive_id in sorted(by_archive):
+        ref = archive_lookup.get(archive_id)
+        if ref is None:
+            raise ValueError(f"이미지 ZIP을 찾을 수 없음: {archive_id}")
+        with zipfile.ZipFile(ref.path, "r") as archive:
+            available = {
+                base.normalize_member_name(info.filename): info
+                for info in archive.infolist()
+                if not info.is_dir()
+            }
+            for row in by_archive[archive_id]:
+                member = base.normalize_member_name(row["image_member"])
+                info = available.get(member)
+                if info is None:
+                    raise FileNotFoundError(
+                        f"{archive_id} 내부 이미지 누락: {member}"
+                    )
+                yield row, archive.read(info)
+
+
 def extract_pilot_images(
     selected: Sequence[Mapping[str, str]],
     archive_lookup: Mapping[str, base.ArchiveRef],
@@ -523,11 +553,6 @@ def extract_pilot_images(
     overlay_keys: set[str],
     show_progress: bool,
 ) -> list[dict[str, Any]]:
-    by_archive: dict[str, list[Mapping[str, str]]] = defaultdict(list)
-    for row in selected:
-        if row["split"] == "test":
-            raise RuntimeError("Test 이미지는 추출할 수 없습니다")
-        by_archive[row["image_archive_id"]].append(row)
     rows: list[dict[str, Any]] = []
     progress = tqdm(
         total=len(selected),
@@ -536,104 +561,85 @@ def extract_pilot_images(
         disable=not show_progress,
     )
     try:
-        for archive_id in sorted(by_archive):
-            ref = archive_lookup.get(archive_id)
-            if ref is None:
-                raise ValueError(f"이미지 ZIP을 찾을 수 없음: {archive_id}")
-            with zipfile.ZipFile(ref.path, "r") as archive:
-                available = {
-                    base.normalize_member_name(info.filename): info
-                    for info in archive.infolist()
-                    if not info.is_dir()
+        for row, image_bytes in iter_selected_image_bytes(
+            selected, archive_lookup
+        ):
+            archive_id = row["image_archive_id"]
+            member = base.normalize_member_name(row["image_member"])
+            boxes = smoke.yolo_boxes_for_row(row)
+            split_dir = smoke.yolo_split(row["split"])
+            basename = smoke.output_basename(row)
+            image_path = output_root / "images" / split_dir / basename
+            label_path = (
+                output_root
+                / "labels"
+                / split_dir
+                / f"{Path(basename).stem}.txt"
+            )
+            unique_key = smoke.candidate_unique_key(row)
+            overlay_path: Path | None = None
+            if unique_key in overlay_keys:
+                overlay_path = (
+                    output_root
+                    / "overlays"
+                    / split_dir
+                    / f"{Path(basename).stem}.jpg"
+                )
+            image_path.parent.mkdir(parents=True, exist_ok=True)
+            image_path.write_bytes(image_bytes)
+            smoke.write_text(
+                label_path,
+                "\n".join(box.line() for box in boxes) + "\n",
+            )
+            if overlay_path is not None:
+                smoke.draw_overlay(
+                    image_bytes,
+                    boxes,
+                    expected_width=smoke.positive_dimension(
+                        row["image_width"], "image_width"
+                    ),
+                    expected_height=smoke.positive_dimension(
+                        row["image_height"], "image_height"
+                    ),
+                    destination=overlay_path,
+                )
+            rows.append(
+                {
+                    "split": row["split"],
+                    "yolo_split": split_dir,
+                    "group_key": row.get("group_key", ""),
+                    "species": row["species"],
+                    "class_id": row["class_id"],
+                    "task": row["task"],
+                    "normality": row["normality"],
+                    "disease_type": row["disease_type"],
+                    "camera_id": row.get("camera_id", ""),
+                    "capture_date": row.get("capture_date", ""),
+                    "capture_time": row.get("capture_time", ""),
+                    "label_archive_id": row.get("label_archive_id", ""),
+                    "image_archive_id": archive_id,
+                    "json_member": row.get("json_member", ""),
+                    "image_member": member,
+                    "image_width": row["image_width"],
+                    "image_height": row["image_height"],
+                    "bbox_count": len(boxes),
+                    "image_path": smoke.portable_relative(
+                        image_path, output_root
+                    ),
+                    "label_path": smoke.portable_relative(
+                        label_path, output_root
+                    ),
+                    "overlay_path": (
+                        smoke.portable_relative(
+                            overlay_path, output_root
+                        )
+                        if overlay_path is not None
+                        else ""
+                    ),
+                    "official_split": row.get("official_split", ""),
                 }
-                for row in by_archive[archive_id]:
-                    member = base.normalize_member_name(row["image_member"])
-                    info = available.get(member)
-                    if info is None:
-                        raise FileNotFoundError(
-                            f"{archive_id} 내부 이미지 누락: {member}"
-                        )
-                    boxes = smoke.yolo_boxes_for_row(row)
-                    image_bytes = archive.read(info)
-                    split_dir = smoke.yolo_split(row["split"])
-                    basename = smoke.output_basename(row)
-                    image_path = (
-                        output_root / "images" / split_dir / basename
-                    )
-                    label_path = (
-                        output_root
-                        / "labels"
-                        / split_dir
-                        / f"{Path(basename).stem}.txt"
-                    )
-                    unique_key = smoke.candidate_unique_key(row)
-                    overlay_path: Path | None = None
-                    if unique_key in overlay_keys:
-                        overlay_path = (
-                            output_root
-                            / "overlays"
-                            / split_dir
-                            / f"{Path(basename).stem}.jpg"
-                        )
-                    image_path.parent.mkdir(parents=True, exist_ok=True)
-                    image_path.write_bytes(image_bytes)
-                    smoke.write_text(
-                        label_path,
-                        "\n".join(box.line() for box in boxes) + "\n",
-                    )
-                    if overlay_path is not None:
-                        smoke.draw_overlay(
-                            image_bytes,
-                            boxes,
-                            expected_width=smoke.positive_dimension(
-                                row["image_width"], "image_width"
-                            ),
-                            expected_height=smoke.positive_dimension(
-                                row["image_height"], "image_height"
-                            ),
-                            destination=overlay_path,
-                        )
-                    rows.append(
-                        {
-                            "split": row["split"],
-                            "yolo_split": split_dir,
-                            "group_key": row.get("group_key", ""),
-                            "species": row["species"],
-                            "class_id": row["class_id"],
-                            "task": row["task"],
-                            "normality": row["normality"],
-                            "disease_type": row["disease_type"],
-                            "camera_id": row.get("camera_id", ""),
-                            "capture_date": row.get("capture_date", ""),
-                            "capture_time": row.get("capture_time", ""),
-                            "label_archive_id": row.get(
-                                "label_archive_id", ""
-                            ),
-                            "image_archive_id": archive_id,
-                            "json_member": row.get("json_member", ""),
-                            "image_member": member,
-                            "image_width": row["image_width"],
-                            "image_height": row["image_height"],
-                            "bbox_count": len(boxes),
-                            "image_path": smoke.portable_relative(
-                                image_path, output_root
-                            ),
-                            "label_path": smoke.portable_relative(
-                                label_path, output_root
-                            ),
-                            "overlay_path": (
-                                smoke.portable_relative(
-                                    overlay_path, output_root
-                                )
-                                if overlay_path is not None
-                                else ""
-                            ),
-                            "official_split": row.get(
-                                "official_split", ""
-                            ),
-                        }
-                    )
-                    progress.update(1)
+            )
+            progress.update(1)
     finally:
         progress.close()
     rows.sort(
