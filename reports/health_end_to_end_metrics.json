@@ -1,0 +1,985 @@
+{
+  "schema_version": 1,
+  "scope": {
+    "analysis_type": "MUSHROOM_HEALTH_CHECK_END_TO_END_V1",
+    "evaluation_images": 100,
+    "per_species_status": 10,
+    "seed": 20260726,
+    "source_split": "health date+camera holdout Validation",
+    "test_images_used": 0,
+    "selected_zip_members_read": 100,
+    "full_archive_extraction": false,
+    "model_training": false,
+    "model_conversion": false
+  },
+  "models": {
+    "detector": "mushroom-yolo11n-camera-holdout-v1",
+    "health": "mushroom-health-yolo11n-date-camera-holdout-v1"
+  },
+  "single_image_json_example": {
+    "analysis_type": "MUSHROOM_HEALTH_CHECK_V1",
+    "status": "SUCCESS",
+    "detector_model": "mushroom-yolo11n-camera-holdout-v1",
+    "health_model": "mushroom-health-yolo11n-date-camera-holdout-v1",
+    "thresholds": {
+      "detection": 0.25,
+      "health_uncertain": 0.7,
+      "health_confidence": 0.7
+    },
+    "results": [
+      {
+        "species": "느타리",
+        "class_id": 0,
+        "detected_count": 1,
+        "detection_confidence": 0.971751868724823,
+        "detection_confidence_min": 0.971751868724823,
+        "health_status": "HEALTHY",
+        "health_confidence": 0.9999728202819824,
+        "healthy_probability": 0.9999728202819824,
+        "disease_suspected_probability": 2.714336005738005e-05,
+        "bbox": [
+          187,
+          769,
+          902,
+          1372
+        ],
+        "crop_bbox": [
+          25,
+          481,
+          1064,
+          1660
+        ]
+      }
+    ],
+    "warnings": [
+      "AI 분석 참고 결과이며 확정 진단이 아닙니다."
+    ]
+  },
+  "thresholds": {
+    "detection": 0.25,
+    "health_uncertain": 0.7,
+    "padding_ratio": 0.15
+  },
+  "detector_provenance_overlap_audit": {
+    "candidate_validation_images": 1000,
+    "detector_train": {
+      "candidate": {
+        "image_overlap_count": 169,
+        "capture_date_overlap_count": 3,
+        "camera_id_overlap_count": 9,
+        "species_camera_overlap_count": 35,
+        "image_overlap_affected_rows": 169,
+        "capture_date_overlap_affected_rows": 1000,
+        "camera_id_overlap_affected_rows": 1000,
+        "species_camera_overlap_affected_rows": 864
+      },
+      "selected": {
+        "image_overlap_count": 0,
+        "capture_date_overlap_count": 3,
+        "camera_id_overlap_count": 9,
+        "species_camera_overlap_count": 32,
+        "image_overlap_affected_rows": 0,
+        "capture_date_overlap_affected_rows": 100,
+        "camera_id_overlap_affected_rows": 100,
+        "species_camera_overlap_affected_rows": 88
+      }
+    },
+    "detector_validation": {
+      "candidate": {
+        "image_overlap_count": 15,
+        "capture_date_overlap_count": 3,
+        "camera_id_overlap_count": 6,
+        "species_camera_overlap_count": 8,
+        "image_overlap_affected_rows": 15,
+        "capture_date_overlap_affected_rows": 1000,
+        "camera_id_overlap_affected_rows": 596,
+        "species_camera_overlap_affected_rows": 136
+      },
+      "selected": {
+        "image_overlap_count": 0,
+        "capture_date_overlap_count": 3,
+        "camera_id_overlap_count": 6,
+        "species_camera_overlap_count": 6,
+        "image_overlap_affected_rows": 0,
+        "capture_date_overlap_affected_rows": 100,
+        "camera_id_overlap_affected_rows": 53,
+        "species_camera_overlap_affected_rows": 12
+      }
+    }
+  },
+  "detector_crop_metrics": {
+    "total": 100,
+    "detection_success_count": 100,
+    "detection_success_rate": 1.0,
+    "exact_species_match_count": 100,
+    "exact_species_match_rate": 1.0,
+    "unexpected_species_image_count": 0,
+    "unexpected_species_image_rate": 0.0,
+    "health_analyzable_count": 100,
+    "health_analyzable_rate": 1.0,
+    "automatic_decision_count": 100,
+    "automatic_decision_rate": 1.0,
+    "automatic_decision_accuracy": 1.0,
+    "accuracy": 1.0,
+    "exact_species_and_health_accuracy": 1.0,
+    "macro_f1": 1.0,
+    "healthy_recall": 1.0,
+    "disease_suspected_recall": 1.0,
+    "uncertain_count": 0,
+    "uncertain_rate": 0.0,
+    "unavailable_count": 0,
+    "disease_as_healthy_count": 0,
+    "per_class": {
+      "HEALTHY": {
+        "support": 50,
+        "tp": 50,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "DISEASE_SUSPECTED": {
+        "support": 50,
+        "tp": 50,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      }
+    },
+    "confusion_matrix": {
+      "HEALTHY": {
+        "HEALTHY": 50,
+        "DISEASE_SUSPECTED": 0,
+        "UNCERTAIN": 0,
+        "UNAVAILABLE": 0
+      },
+      "DISEASE_SUSPECTED": {
+        "HEALTHY": 0,
+        "DISEASE_SUSPECTED": 50,
+        "UNCERTAIN": 0,
+        "UNAVAILABLE": 0
+      }
+    }
+  },
+  "ground_truth_crop_metrics": {
+    "total": 100,
+    "detection_success_count": null,
+    "detection_success_rate": null,
+    "exact_species_match_count": null,
+    "exact_species_match_rate": null,
+    "unexpected_species_image_count": null,
+    "unexpected_species_image_rate": null,
+    "health_analyzable_count": 100,
+    "health_analyzable_rate": 1.0,
+    "automatic_decision_count": 100,
+    "automatic_decision_rate": 1.0,
+    "automatic_decision_accuracy": 1.0,
+    "accuracy": 1.0,
+    "exact_species_and_health_accuracy": null,
+    "macro_f1": 1.0,
+    "healthy_recall": 1.0,
+    "disease_suspected_recall": 1.0,
+    "uncertain_count": 0,
+    "uncertain_rate": 0.0,
+    "unavailable_count": 0,
+    "disease_as_healthy_count": 0,
+    "per_class": {
+      "HEALTHY": {
+        "support": 50,
+        "tp": 50,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "DISEASE_SUSPECTED": {
+        "support": 50,
+        "tp": 50,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      }
+    },
+    "confusion_matrix": {
+      "HEALTHY": {
+        "HEALTHY": 50,
+        "DISEASE_SUSPECTED": 0,
+        "UNCERTAIN": 0,
+        "UNAVAILABLE": 0
+      },
+      "DISEASE_SUSPECTED": {
+        "HEALTHY": 0,
+        "DISEASE_SUSPECTED": 50,
+        "UNCERTAIN": 0,
+        "UNAVAILABLE": 0
+      }
+    }
+  },
+  "overall_ground_truth_minus_end_to_end": {
+    "definition": "전체 100장 기준 차이로, detector 품종 누락과 crop 차이를 모두 포함합니다.",
+    "accuracy": 0.0,
+    "macro_f1": 0.0,
+    "healthy_recall": 0.0,
+    "disease_suspected_recall": 0.0
+  },
+  "paired_crop_comparison": {
+    "definition": "정답 품종이 탐지된 동일 이미지에서 detector crop과 ground-truth crop만 비교합니다.",
+    "paired_images": 100,
+    "detector_crop_metrics": {
+      "total": 100,
+      "detection_success_count": 100,
+      "detection_success_rate": 1.0,
+      "exact_species_match_count": 100,
+      "exact_species_match_rate": 1.0,
+      "unexpected_species_image_count": 0,
+      "unexpected_species_image_rate": 0.0,
+      "health_analyzable_count": 100,
+      "health_analyzable_rate": 1.0,
+      "automatic_decision_count": 100,
+      "automatic_decision_rate": 1.0,
+      "automatic_decision_accuracy": 1.0,
+      "accuracy": 1.0,
+      "exact_species_and_health_accuracy": 1.0,
+      "macro_f1": 1.0,
+      "healthy_recall": 1.0,
+      "disease_suspected_recall": 1.0,
+      "uncertain_count": 0,
+      "uncertain_rate": 0.0,
+      "unavailable_count": 0,
+      "disease_as_healthy_count": 0,
+      "per_class": {
+        "HEALTHY": {
+          "support": 50,
+          "tp": 50,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "DISEASE_SUSPECTED": {
+          "support": 50,
+          "tp": 50,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        }
+      },
+      "confusion_matrix": {
+        "HEALTHY": {
+          "HEALTHY": 50,
+          "DISEASE_SUSPECTED": 0,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        },
+        "DISEASE_SUSPECTED": {
+          "HEALTHY": 0,
+          "DISEASE_SUSPECTED": 50,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        }
+      }
+    },
+    "ground_truth_crop_metrics": {
+      "total": 100,
+      "detection_success_count": null,
+      "detection_success_rate": null,
+      "exact_species_match_count": null,
+      "exact_species_match_rate": null,
+      "unexpected_species_image_count": null,
+      "unexpected_species_image_rate": null,
+      "health_analyzable_count": 100,
+      "health_analyzable_rate": 1.0,
+      "automatic_decision_count": 100,
+      "automatic_decision_rate": 1.0,
+      "automatic_decision_accuracy": 1.0,
+      "accuracy": 1.0,
+      "exact_species_and_health_accuracy": null,
+      "macro_f1": 1.0,
+      "healthy_recall": 1.0,
+      "disease_suspected_recall": 1.0,
+      "uncertain_count": 0,
+      "uncertain_rate": 0.0,
+      "unavailable_count": 0,
+      "disease_as_healthy_count": 0,
+      "per_class": {
+        "HEALTHY": {
+          "support": 50,
+          "tp": 50,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "DISEASE_SUSPECTED": {
+          "support": 50,
+          "tp": 50,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        }
+      },
+      "confusion_matrix": {
+        "HEALTHY": {
+          "HEALTHY": 50,
+          "DISEASE_SUSPECTED": 0,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        },
+        "DISEASE_SUSPECTED": {
+          "HEALTHY": 0,
+          "DISEASE_SUSPECTED": 50,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        }
+      }
+    },
+    "ground_truth_minus_detector": {
+      "accuracy": 0.0,
+      "macro_f1": 0.0,
+      "healthy_recall": 0.0,
+      "disease_suspected_recall": 0.0
+    },
+    "status_agreement_count": 100,
+    "status_agreement_rate": 1.0
+  },
+  "detector_ground_truth_geometry": {
+    "detector_union_iou": {
+      "count": 100,
+      "min": 0.3291739313755655,
+      "mean": 0.9611743363228326,
+      "max": 0.9983818770226537
+    },
+    "detector_gt_crop_iou": {
+      "count": 100,
+      "min": 0.7028000340947835,
+      "mean": 0.9829534134402602,
+      "max": 0.9992897727272727
+    },
+    "gt_crop_coverage": {
+      "count": 100,
+      "min": 0.7326698435321056,
+      "mean": 0.9915464586571866,
+      "max": 1.0
+    },
+    "detector_crop_coverage": {
+      "count": 100,
+      "min": 0.7028000340947835,
+      "mean": 0.9911539147526771,
+      "max": 1.0
+    },
+    "detector_gt_crop_area_ratio": {
+      "count": 100,
+      "min": 0.7675862771047541,
+      "mean": 1.0015806803462306,
+      "max": 1.4228798399078257
+    },
+    "disease_probability_delta": {
+      "count": 100,
+      "min": -0.06330687738955021,
+      "mean": -0.0007795340981325234,
+      "max": 0.03233097121119499
+    }
+  },
+  "per_species_detector_crop": {
+    "느타리": {
+      "total": 20,
+      "detection_success_count": 20,
+      "detection_success_rate": 1.0,
+      "exact_species_match_count": 20,
+      "exact_species_match_rate": 1.0,
+      "unexpected_species_image_count": 0,
+      "unexpected_species_image_rate": 0.0,
+      "health_analyzable_count": 20,
+      "health_analyzable_rate": 1.0,
+      "automatic_decision_count": 20,
+      "automatic_decision_rate": 1.0,
+      "automatic_decision_accuracy": 1.0,
+      "accuracy": 1.0,
+      "exact_species_and_health_accuracy": 1.0,
+      "macro_f1": 1.0,
+      "healthy_recall": 1.0,
+      "disease_suspected_recall": 1.0,
+      "uncertain_count": 0,
+      "uncertain_rate": 0.0,
+      "unavailable_count": 0,
+      "disease_as_healthy_count": 0,
+      "per_class": {
+        "HEALTHY": {
+          "support": 10,
+          "tp": 10,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "DISEASE_SUSPECTED": {
+          "support": 10,
+          "tp": 10,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        }
+      },
+      "confusion_matrix": {
+        "HEALTHY": {
+          "HEALTHY": 10,
+          "DISEASE_SUSPECTED": 0,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        },
+        "DISEASE_SUSPECTED": {
+          "HEALTHY": 0,
+          "DISEASE_SUSPECTED": 10,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        }
+      }
+    },
+    "양송이": {
+      "total": 20,
+      "detection_success_count": 20,
+      "detection_success_rate": 1.0,
+      "exact_species_match_count": 20,
+      "exact_species_match_rate": 1.0,
+      "unexpected_species_image_count": 0,
+      "unexpected_species_image_rate": 0.0,
+      "health_analyzable_count": 20,
+      "health_analyzable_rate": 1.0,
+      "automatic_decision_count": 20,
+      "automatic_decision_rate": 1.0,
+      "automatic_decision_accuracy": 1.0,
+      "accuracy": 1.0,
+      "exact_species_and_health_accuracy": 1.0,
+      "macro_f1": 1.0,
+      "healthy_recall": 1.0,
+      "disease_suspected_recall": 1.0,
+      "uncertain_count": 0,
+      "uncertain_rate": 0.0,
+      "unavailable_count": 0,
+      "disease_as_healthy_count": 0,
+      "per_class": {
+        "HEALTHY": {
+          "support": 10,
+          "tp": 10,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "DISEASE_SUSPECTED": {
+          "support": 10,
+          "tp": 10,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        }
+      },
+      "confusion_matrix": {
+        "HEALTHY": {
+          "HEALTHY": 10,
+          "DISEASE_SUSPECTED": 0,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        },
+        "DISEASE_SUSPECTED": {
+          "HEALTHY": 0,
+          "DISEASE_SUSPECTED": 10,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        }
+      }
+    },
+    "큰느타리": {
+      "total": 20,
+      "detection_success_count": 20,
+      "detection_success_rate": 1.0,
+      "exact_species_match_count": 20,
+      "exact_species_match_rate": 1.0,
+      "unexpected_species_image_count": 0,
+      "unexpected_species_image_rate": 0.0,
+      "health_analyzable_count": 20,
+      "health_analyzable_rate": 1.0,
+      "automatic_decision_count": 20,
+      "automatic_decision_rate": 1.0,
+      "automatic_decision_accuracy": 1.0,
+      "accuracy": 1.0,
+      "exact_species_and_health_accuracy": 1.0,
+      "macro_f1": 1.0,
+      "healthy_recall": 1.0,
+      "disease_suspected_recall": 1.0,
+      "uncertain_count": 0,
+      "uncertain_rate": 0.0,
+      "unavailable_count": 0,
+      "disease_as_healthy_count": 0,
+      "per_class": {
+        "HEALTHY": {
+          "support": 10,
+          "tp": 10,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "DISEASE_SUSPECTED": {
+          "support": 10,
+          "tp": 10,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        }
+      },
+      "confusion_matrix": {
+        "HEALTHY": {
+          "HEALTHY": 10,
+          "DISEASE_SUSPECTED": 0,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        },
+        "DISEASE_SUSPECTED": {
+          "HEALTHY": 0,
+          "DISEASE_SUSPECTED": 10,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        }
+      }
+    },
+    "팽이": {
+      "total": 20,
+      "detection_success_count": 20,
+      "detection_success_rate": 1.0,
+      "exact_species_match_count": 20,
+      "exact_species_match_rate": 1.0,
+      "unexpected_species_image_count": 0,
+      "unexpected_species_image_rate": 0.0,
+      "health_analyzable_count": 20,
+      "health_analyzable_rate": 1.0,
+      "automatic_decision_count": 20,
+      "automatic_decision_rate": 1.0,
+      "automatic_decision_accuracy": 1.0,
+      "accuracy": 1.0,
+      "exact_species_and_health_accuracy": 1.0,
+      "macro_f1": 1.0,
+      "healthy_recall": 1.0,
+      "disease_suspected_recall": 1.0,
+      "uncertain_count": 0,
+      "uncertain_rate": 0.0,
+      "unavailable_count": 0,
+      "disease_as_healthy_count": 0,
+      "per_class": {
+        "HEALTHY": {
+          "support": 10,
+          "tp": 10,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "DISEASE_SUSPECTED": {
+          "support": 10,
+          "tp": 10,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        }
+      },
+      "confusion_matrix": {
+        "HEALTHY": {
+          "HEALTHY": 10,
+          "DISEASE_SUSPECTED": 0,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        },
+        "DISEASE_SUSPECTED": {
+          "HEALTHY": 0,
+          "DISEASE_SUSPECTED": 10,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        }
+      }
+    },
+    "표고": {
+      "total": 20,
+      "detection_success_count": 20,
+      "detection_success_rate": 1.0,
+      "exact_species_match_count": 20,
+      "exact_species_match_rate": 1.0,
+      "unexpected_species_image_count": 0,
+      "unexpected_species_image_rate": 0.0,
+      "health_analyzable_count": 20,
+      "health_analyzable_rate": 1.0,
+      "automatic_decision_count": 20,
+      "automatic_decision_rate": 1.0,
+      "automatic_decision_accuracy": 1.0,
+      "accuracy": 1.0,
+      "exact_species_and_health_accuracy": 1.0,
+      "macro_f1": 1.0,
+      "healthy_recall": 1.0,
+      "disease_suspected_recall": 1.0,
+      "uncertain_count": 0,
+      "uncertain_rate": 0.0,
+      "unavailable_count": 0,
+      "disease_as_healthy_count": 0,
+      "per_class": {
+        "HEALTHY": {
+          "support": 10,
+          "tp": 10,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "DISEASE_SUSPECTED": {
+          "support": 10,
+          "tp": 10,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        }
+      },
+      "confusion_matrix": {
+        "HEALTHY": {
+          "HEALTHY": 10,
+          "DISEASE_SUSPECTED": 0,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        },
+        "DISEASE_SUSPECTED": {
+          "HEALTHY": 0,
+          "DISEASE_SUSPECTED": 10,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        }
+      }
+    }
+  },
+  "per_species_ground_truth_crop": {
+    "느타리": {
+      "total": 20,
+      "detection_success_count": null,
+      "detection_success_rate": null,
+      "exact_species_match_count": null,
+      "exact_species_match_rate": null,
+      "unexpected_species_image_count": null,
+      "unexpected_species_image_rate": null,
+      "health_analyzable_count": 20,
+      "health_analyzable_rate": 1.0,
+      "automatic_decision_count": 20,
+      "automatic_decision_rate": 1.0,
+      "automatic_decision_accuracy": 1.0,
+      "accuracy": 1.0,
+      "exact_species_and_health_accuracy": null,
+      "macro_f1": 1.0,
+      "healthy_recall": 1.0,
+      "disease_suspected_recall": 1.0,
+      "uncertain_count": 0,
+      "uncertain_rate": 0.0,
+      "unavailable_count": 0,
+      "disease_as_healthy_count": 0,
+      "per_class": {
+        "HEALTHY": {
+          "support": 10,
+          "tp": 10,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "DISEASE_SUSPECTED": {
+          "support": 10,
+          "tp": 10,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        }
+      },
+      "confusion_matrix": {
+        "HEALTHY": {
+          "HEALTHY": 10,
+          "DISEASE_SUSPECTED": 0,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        },
+        "DISEASE_SUSPECTED": {
+          "HEALTHY": 0,
+          "DISEASE_SUSPECTED": 10,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        }
+      }
+    },
+    "양송이": {
+      "total": 20,
+      "detection_success_count": null,
+      "detection_success_rate": null,
+      "exact_species_match_count": null,
+      "exact_species_match_rate": null,
+      "unexpected_species_image_count": null,
+      "unexpected_species_image_rate": null,
+      "health_analyzable_count": 20,
+      "health_analyzable_rate": 1.0,
+      "automatic_decision_count": 20,
+      "automatic_decision_rate": 1.0,
+      "automatic_decision_accuracy": 1.0,
+      "accuracy": 1.0,
+      "exact_species_and_health_accuracy": null,
+      "macro_f1": 1.0,
+      "healthy_recall": 1.0,
+      "disease_suspected_recall": 1.0,
+      "uncertain_count": 0,
+      "uncertain_rate": 0.0,
+      "unavailable_count": 0,
+      "disease_as_healthy_count": 0,
+      "per_class": {
+        "HEALTHY": {
+          "support": 10,
+          "tp": 10,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "DISEASE_SUSPECTED": {
+          "support": 10,
+          "tp": 10,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        }
+      },
+      "confusion_matrix": {
+        "HEALTHY": {
+          "HEALTHY": 10,
+          "DISEASE_SUSPECTED": 0,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        },
+        "DISEASE_SUSPECTED": {
+          "HEALTHY": 0,
+          "DISEASE_SUSPECTED": 10,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        }
+      }
+    },
+    "큰느타리": {
+      "total": 20,
+      "detection_success_count": null,
+      "detection_success_rate": null,
+      "exact_species_match_count": null,
+      "exact_species_match_rate": null,
+      "unexpected_species_image_count": null,
+      "unexpected_species_image_rate": null,
+      "health_analyzable_count": 20,
+      "health_analyzable_rate": 1.0,
+      "automatic_decision_count": 20,
+      "automatic_decision_rate": 1.0,
+      "automatic_decision_accuracy": 1.0,
+      "accuracy": 1.0,
+      "exact_species_and_health_accuracy": null,
+      "macro_f1": 1.0,
+      "healthy_recall": 1.0,
+      "disease_suspected_recall": 1.0,
+      "uncertain_count": 0,
+      "uncertain_rate": 0.0,
+      "unavailable_count": 0,
+      "disease_as_healthy_count": 0,
+      "per_class": {
+        "HEALTHY": {
+          "support": 10,
+          "tp": 10,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "DISEASE_SUSPECTED": {
+          "support": 10,
+          "tp": 10,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        }
+      },
+      "confusion_matrix": {
+        "HEALTHY": {
+          "HEALTHY": 10,
+          "DISEASE_SUSPECTED": 0,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        },
+        "DISEASE_SUSPECTED": {
+          "HEALTHY": 0,
+          "DISEASE_SUSPECTED": 10,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        }
+      }
+    },
+    "팽이": {
+      "total": 20,
+      "detection_success_count": null,
+      "detection_success_rate": null,
+      "exact_species_match_count": null,
+      "exact_species_match_rate": null,
+      "unexpected_species_image_count": null,
+      "unexpected_species_image_rate": null,
+      "health_analyzable_count": 20,
+      "health_analyzable_rate": 1.0,
+      "automatic_decision_count": 20,
+      "automatic_decision_rate": 1.0,
+      "automatic_decision_accuracy": 1.0,
+      "accuracy": 1.0,
+      "exact_species_and_health_accuracy": null,
+      "macro_f1": 1.0,
+      "healthy_recall": 1.0,
+      "disease_suspected_recall": 1.0,
+      "uncertain_count": 0,
+      "uncertain_rate": 0.0,
+      "unavailable_count": 0,
+      "disease_as_healthy_count": 0,
+      "per_class": {
+        "HEALTHY": {
+          "support": 10,
+          "tp": 10,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "DISEASE_SUSPECTED": {
+          "support": 10,
+          "tp": 10,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        }
+      },
+      "confusion_matrix": {
+        "HEALTHY": {
+          "HEALTHY": 10,
+          "DISEASE_SUSPECTED": 0,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        },
+        "DISEASE_SUSPECTED": {
+          "HEALTHY": 0,
+          "DISEASE_SUSPECTED": 10,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        }
+      }
+    },
+    "표고": {
+      "total": 20,
+      "detection_success_count": null,
+      "detection_success_rate": null,
+      "exact_species_match_count": null,
+      "exact_species_match_rate": null,
+      "unexpected_species_image_count": null,
+      "unexpected_species_image_rate": null,
+      "health_analyzable_count": 20,
+      "health_analyzable_rate": 1.0,
+      "automatic_decision_count": 20,
+      "automatic_decision_rate": 1.0,
+      "automatic_decision_accuracy": 1.0,
+      "accuracy": 1.0,
+      "exact_species_and_health_accuracy": null,
+      "macro_f1": 1.0,
+      "healthy_recall": 1.0,
+      "disease_suspected_recall": 1.0,
+      "uncertain_count": 0,
+      "uncertain_rate": 0.0,
+      "unavailable_count": 0,
+      "disease_as_healthy_count": 0,
+      "per_class": {
+        "HEALTHY": {
+          "support": 10,
+          "tp": 10,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "DISEASE_SUSPECTED": {
+          "support": 10,
+          "tp": 10,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        }
+      },
+      "confusion_matrix": {
+        "HEALTHY": {
+          "HEALTHY": 10,
+          "DISEASE_SUSPECTED": 0,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        },
+        "DISEASE_SUSPECTED": {
+          "HEALTHY": 0,
+          "DISEASE_SUSPECTED": 10,
+          "UNCERTAIN": 0,
+          "UNAVAILABLE": 0
+        }
+      }
+    }
+  },
+  "error_rows": 0,
+  "safety": {
+    "test_images_used": 0,
+    "source_zip_modified": false,
+    "model_files_modified": false,
+    "source_manifests_modified": false,
+    "existing_artifacts_modified": false,
+    "outputs_outside_allowlist": 0,
+    "local_absolute_paths_exposed": 0
+  },
+  "limitations": [
+    "정상은 2021-11-04, 병해는 2021-11-26/12-04로 날짜와 상태가 결합되어 있습니다.",
+    "선택 표본은 detector 원본 Train/Validation과 동일 이미지를 제외하지만 촬영 날짜·카메라 환경 중복은 별도로 남아 있습니다.",
+    "ground-truth crop은 원본 ZIP 이미지를 메모리에서 직접 crop한 것으로 기존 JPEG95 health Validation 파일과 bit-identical하지 않습니다.",
+    "내부 AIHub 환경 평가이며 외부 스마트폰 일반화 성능이 아닙니다."
+  ]
+}
