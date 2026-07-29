@@ -1,37 +1,67 @@
-# Python
+# Python environments and caches
 .venv/
+venv/
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
-# Local environment
+# Local environment (the documented template remains tracked)
 .env
+.env.*
+!.env.example
 
-# Local datasets
+# Local datasets, evaluation images, and user uploads
 data/
 dataset/
 datasets/
+testvision/
+uploads/
+evaluation_images/
+validation_images/
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.bmp
+*.tif
+*.tiff
+*:Zone.Identifier
 
-# Generated reports and artifacts
+# Archives must not be used as repository or Docker inputs
+*.zip
+*.7z
+*.tar
+*.tar.gz
+*.tgz
+
+# Generated reports, training runs, artifacts, and logs
 reports/*.csv
 artifacts/
-artifacts/checkpoints/
-artifacts/*.sqlite3*
 runs/
 weights/
+*.log
 
-# Model files
+# Model files: runtime directories may keep tracked documentation only
+runtime/models/*.pt
+runtime/models/**/*.pt
 *.pt
 *.pth
 *.onnx
+*.engine
+*.ckpt
+*.safetensors
 
-# IDE
+# Runtime caches created by Ultralytics and related libraries
+.cache/
+.config/Ultralytics/
+.ultralytics/
+Ultralytics/
+
+# IDE and OS metadata
 .idea/
 .vscode/
-
-# Generated dataset manifests
-reports/detection_dataset_manifest.csv
-artifacts/detection_manifest.sqlite3
-
-# Generated dataset manifests
-reports/detection_dataset_manifest.csv
-artifacts/detection_manifest.sqlite3
+.DS_Store

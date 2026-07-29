@@ -1,4 +1,4 @@
-"""FastAPI application factory for Mushroom Health Check API v1."""
+"""FastAPI application factory for Mushroom Vision Service."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 
 from app.api.health import router as health_router
+from app.api.status import router as status_router
 from app.core.config import HealthAPISettings
 from app.core.model_registry import ModelRegistry
 from app.services.mushroom_health_service import (
@@ -23,6 +24,8 @@ def create_app(
     settings: HealthAPISettings | None = None,
     registry: ModelRegistry | None = None,
 ) -> FastAPI:
+    """Create one API process with a singleton model registry lifespan."""
+
     resolved_settings = (
         settings
         or (getattr(registry, "settings", None) if registry is not None else None)
@@ -60,7 +63,7 @@ def create_app(
                 executor.shutdown(wait=True, cancel_futures=True)
 
     application = FastAPI(
-        title="Mushroom Health Check API",
+        title="Mushroom Vision Service API",
         version="1.0.0",
         description=(
             "YOLO11n 품종 탐지와 이진 건강 분류를 결합한 내부 검증 API입니다. "
@@ -69,6 +72,7 @@ def create_app(
         lifespan=lifespan,
     )
     application.include_router(health_router)
+    application.include_router(status_router)
     return application
 
 

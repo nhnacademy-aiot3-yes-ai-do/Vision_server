@@ -201,6 +201,8 @@ def decode_image_bytes(
 
 
 class MushroomHealthService:
+    """Validate uploads and serialize access to the verified model pair."""
+
     def __init__(
         self,
         registry: ModelRegistry,

@@ -20,6 +20,8 @@ router = APIRouter(prefix="/api/v1/mushroom", tags=["mushroom-health"])
 
 
 async def get_health_service(request: Request) -> MushroomHealthService:
+    """Return the lifespan-managed service or a safe availability error."""
+
     service = getattr(request.app.state, "health_service", None)
     if service is None:
         raise HTTPException(status_code=503, detail="Service unavailable")
@@ -73,6 +75,8 @@ async def health_check(
         Depends(get_health_service),
     ],
 ) -> HealthCheckResponse | JSONResponse:
+    """Analyze one upload without persisting it or exposing internal errors."""
+
     try:
         internal = await service.analyze_upload(image)
         return HealthCheckResponse.from_internal(internal)

@@ -39,13 +39,17 @@ HEALTH_MODEL_PATH = (
 )
 DETECTOR_MODEL_NAME = "mushroom-yolo11n-camera-holdout-v1"
 HEALTH_MODEL_NAME = "mushroom-health-yolo11n-date-camera-holdout-v1"
+DETECTOR_MODEL_SHA256 = (
+    "8d17eb493f2eeccccd832c56da2f346dfc730e5605c460016386c6bd0be10d32"
+)
+HEALTH_MODEL_SHA256 = (
+    "720efb30093c2fbaf8866243a60870c7816f3e141c81e0fac015a358edce1f92"
+)
+DETECTOR_MODEL_SIZE_BYTES = 5_447_706
+HEALTH_MODEL_SIZE_BYTES = 3_186_882
 EXPECTED_MODEL_SHA256 = {
-    DETECTOR_MODEL_PATH: (
-        "8d17eb493f2eeccccd832c56da2f346dfc730e5605c460016386c6bd0be10d32"
-    ),
-    HEALTH_MODEL_PATH: (
-        "720efb30093c2fbaf8866243a60870c7816f3e141c81e0fac015a358edce1f92"
-    ),
+    DETECTOR_MODEL_PATH: DETECTOR_MODEL_SHA256,
+    HEALTH_MODEL_PATH: HEALTH_MODEL_SHA256,
 }
 DETECTOR_IMAGE_SIZE = 640
 HEALTH_IMAGE_SIZE = 320
@@ -729,20 +733,29 @@ def load_fixed_models(
     *,
     device: str = "auto",
     verify_sha256: bool = True,
+    detector_path: Path = DETECTOR_MODEL_PATH,
+    health_model_path: Path = HEALTH_MODEL_PATH,
 ) -> tuple[UltralyticsDetector, UltralyticsHealthClassifier]:
-    if not DETECTOR_MODEL_PATH.is_file() or not HEALTH_MODEL_PATH.is_file():
+    """Load the approved detector and classifier from caller-selected paths."""
+    detector_path = Path(detector_path)
+    health_model_path = Path(health_model_path)
+    if not detector_path.is_file() or not health_model_path.is_file():
         raise FileNotFoundError("고정 detector 또는 health best.pt가 없습니다")
     if verify_sha256:
-        for path, expected_hash in EXPECTED_MODEL_SHA256.items():
+        approved_models = (
+            ("detector", detector_path, DETECTOR_MODEL_SHA256),
+            ("health", health_model_path, HEALTH_MODEL_SHA256),
+        )
+        for role, path, expected_hash in approved_models:
             actual_hash = file_fingerprint(path)[2]
             if actual_hash != expected_hash:
                 raise RuntimeError(
-                    f"승인된 고정 모델 SHA-256 불일치: {path.parent.name}"
+                    f"승인된 고정 모델 SHA-256 불일치: {role}"
                 )
     from ultralytics import YOLO
 
-    detector = YOLO(str(DETECTOR_MODEL_PATH.resolve()), task="detect")
-    classifier = YOLO(str(HEALTH_MODEL_PATH.resolve()), task="classify")
+    detector = YOLO(str(detector_path.resolve()), task="detect")
+    classifier = YOLO(str(health_model_path.resolve()), task="classify")
     return (
         UltralyticsDetector(detector, device=device),
         UltralyticsHealthClassifier(classifier, device=device),

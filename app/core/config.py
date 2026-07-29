@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Mapping
 
 from scripts import predict_mushroom_health as predictor
@@ -57,8 +58,23 @@ def _parse_bool(
     raise ValueError(f"{name} must be a boolean")
 
 
+def _parse_path(
+    environment: Mapping[str, str],
+    name: str,
+    default: Path,
+) -> Path:
+    raw = environment.get(name)
+    if raw is None or not raw.strip():
+        return default
+    return Path(raw.strip()).expanduser()
+
+
 @dataclass(frozen=True)
 class HealthAPISettings:
+    """Validated process configuration for models, thresholds, and uploads."""
+
+    detector_model_path: Path = predictor.DETECTOR_MODEL_PATH
+    health_model_path: Path = predictor.HEALTH_MODEL_PATH
     detection_confidence: float = predictor.DEFAULT_DETECTION_CONFIDENCE
     min_detection_confidence: float = (
         predictor.DEFAULT_MIN_DETECTION_CONFIDENCE
@@ -98,6 +114,16 @@ class HealthAPISettings:
     ) -> "HealthAPISettings":
         source = os.environ if environment is None else environment
         return cls(
+            detector_model_path=_parse_path(
+                source,
+                "DETECTOR_MODEL_PATH",
+                predictor.DETECTOR_MODEL_PATH,
+            ),
+            health_model_path=_parse_path(
+                source,
+                "HEALTH_MODEL_PATH",
+                predictor.HEALTH_MODEL_PATH,
+            ),
             detection_confidence=_parse_float(
                 source,
                 "HEALTH_DETECTION_CONFIDENCE",

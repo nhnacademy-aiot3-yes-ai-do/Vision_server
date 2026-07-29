@@ -44,13 +44,21 @@ class ModelRegistry:
         settings: HealthAPISettings,
         *,
         loader: ModelLoader | None = None,
-        detector_path: Path = predictor.DETECTOR_MODEL_PATH,
-        health_model_path: Path = predictor.HEALTH_MODEL_PATH,
+        detector_path: Path | None = None,
+        health_model_path: Path | None = None,
     ) -> None:
         self.settings = settings
         self._loader = loader or predictor.load_fixed_models
-        self._detector_path = detector_path
-        self._health_model_path = health_model_path
+        self._detector_path = (
+            detector_path
+            if detector_path is not None
+            else settings.detector_model_path
+        )
+        self._health_model_path = (
+            health_model_path
+            if health_model_path is not None
+            else settings.health_model_path
+        )
         self._models: ModelPair | None = None
         self._fingerprints: dict[Path, tuple[int, int, str]] | None = None
         self._state = RegistryState.UNLOADED
@@ -90,6 +98,8 @@ class ModelRegistry:
                 detector, classifier = self._loader(
                     device=self.settings.device,
                     verify_sha256=self.settings.verify_model_sha256,
+                    detector_path=self._detector_path,
+                    health_model_path=self._health_model_path,
                 )
                 self._validate_class_mapping(detector, classifier)
                 after = self._snapshot_models()

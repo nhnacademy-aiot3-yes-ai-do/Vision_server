@@ -1,0 +1,4 @@
+-r requirements-runtime.txt
+
+# Tests use the repository's direct ASGI client; httpx is intentionally absent.
+pytest==9.1.1

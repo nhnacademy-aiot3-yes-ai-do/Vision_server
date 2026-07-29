@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "service": "mushroom-vision-service",
+  "models": [
+    {
+      "role": "detector",
+      "name": "mushroom-yolo11n-camera-holdout-v1",
+      "version": "v1",
+      "purpose": "사진에서 5개 버섯 품종의 객체, bbox, 개수와 confidence를 탐지",
+      "framework": "Ultralytics YOLO11n / PyTorch",
+      "task": "object-detection",
+      "classMapping": {
+        "0": "느타리",
+        "1": "양송이",
+        "2": "큰느타리",
+        "3": "팽이",
+        "4": "표고"
+      },
+      "rawClassMapping": {
+        "0": "느타리",
+        "1": "양송이",
+        "2": "큰느타리",
+        "3": "팽이",
+        "4": "표고"
+      },
+      "sizeBytes": 5447706,
+      "sha256": "8d17eb493f2eeccccd832c56da2f346dfc730e5605c460016386c6bd0be10d32",
+      "sourceLocalPath": "artifacts/models/yolo11n_camera_holdout_v1/best.pt",
+      "runtimeRelativePath": "runtime/models/detector/best.pt",
+      "dockerRuntimePath": "/models/detector/best.pt",
+      "imageSize": 640,
+      "validationScope": [
+        "species+camera_id holdout 검증",
+        "camera holdout mAP50-95 0.899",
+        "AIHub 미사용 느타리 10장 smoke test에서 탐지 10/10"
+      ],
+      "knownLimitations": [
+        "느타리, 양송이, 큰느타리, 팽이, 표고 외 품종은 지원하지 않음",
+        "외부 스마트폰 사진의 조명·배경·촬영 거리 일반화는 충분히 검증되지 않음",
+        "낮은 품종 탐지 confidence에서는 건강 분류를 중단해야 함"
+      ]
+    },
+    {
+      "role": "health",
+      "name": "mushroom-health-yolo11n-date-camera-holdout-v1",
+      "version": "v1",
+      "purpose": "품종별 union crop을 HEALTHY 또는 DISEASE_SUSPECTED 후보로 이진 분류",
+      "framework": "Ultralytics YOLO11n-cls / PyTorch",
+      "task": "image-classification",
+      "classMapping": {
+        "0": "HEALTHY",
+        "1": "DISEASE_SUSPECTED"
+      },
+      "rawClassMapping": {
+        "0": "0_healthy",
+        "1": "1_disease_suspected"
+      },
+      "sizeBytes": 3186882,
+      "sha256": "720efb30093c2fbaf8866243a60870c7816f3e141c81e0fac015a358edce1f92",
+      "sourceLocalPath": "artifacts/models/yolo11n_health_date_camera_holdout_v1/best.pt",
+      "runtimeRelativePath": "runtime/models/health/best.pt",
+      "dockerRuntimePath": "/models/health/best.pt",
+      "imageSize": 320,
+      "validationScope": [
+        "date+global camera holdout Validation 1000장 Top-1 accuracy 0.999",
+        "내부 end-to-end 100장 Accuracy 및 Macro F1 1.000",
+        "AIHub 미사용 느타리 10장 smoke test에서 건강 상태 10/10"
+      ],
+      "knownLimitations": [
+        "HEALTHY와 DISEASE_SUSPECTED만 제공하며 병명을 확정하지 않음",
+        "외부 스마트폰 사진에 대한 독립 일반화 평가는 완료되지 않음",
+        "품종 탐지 bbox와 crop 품질에 의존함",
+        "수확 적기, 생육 단계, 해충, 병반 위치와 크기 측정은 지원하지 않음"
+      ]
+    }
+  ]
+}

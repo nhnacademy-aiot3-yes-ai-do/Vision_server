@@ -106,7 +106,18 @@ def test_load_is_singleton_and_accepts_wrapper_model_names(
     assert registry.get_models() is first
     assert registry.state is RegistryState.READY
     assert registry.load_attempts == 1
-    assert calls == [{"device": "cpu", "verify_sha256": True}]
+    detector_path, health_path = (
+        registry._detector_path,
+        registry._health_model_path,
+    )
+    assert calls == [
+        {
+            "device": "cpu",
+            "verify_sha256": True,
+            "detector_path": detector_path,
+            "health_model_path": health_path,
+        }
+    ]
 
 
 def test_concurrent_load_calls_loader_exactly_once(tmp_path: Path) -> None:
@@ -195,6 +206,37 @@ def test_approved_sha_verification_flag_and_device_are_forwarded(
         {
             "device": "cuda:7",
             "verify_sha256": verify_sha256,
+            "detector_path": registry._detector_path,
+            "health_model_path": registry._health_model_path,
+        }
+    ]
+
+
+def test_settings_model_paths_are_forwarded_to_loader(
+    tmp_path: Path,
+) -> None:
+    detector_path, health_path = _fake_weights(tmp_path)
+    settings = HealthAPISettings(
+        detector_model_path=detector_path,
+        health_model_path=health_path,
+        verify_model_sha256=False,
+        device="cpu",
+    )
+    received: list[dict[str, object]] = []
+
+    def loader(**kwargs: object) -> tuple[Any, Any]:
+        received.append(dict(kwargs))
+        return _valid_pair()
+
+    registry = ModelRegistry(settings, loader=loader)
+    registry.load()
+
+    assert received == [
+        {
+            "device": "cpu",
+            "verify_sha256": False,
+            "detector_path": detector_path,
+            "health_model_path": health_path,
         }
     ]
 
@@ -299,6 +341,8 @@ def test_public_status_never_exposes_model_or_local_paths() -> None:
 def test_settings_are_loaded_from_environment_and_validated() -> None:
     settings = HealthAPISettings.from_env(
         {
+            "DETECTOR_MODEL_PATH": "runtime/models/detector/best.pt",
+            "HEALTH_MODEL_PATH": "runtime/models/health/best.pt",
             "HEALTH_DETECTION_CONFIDENCE": "0.31",
             "HEALTH_MIN_DETECTION_CONFIDENCE": "0.55",
             "HEALTH_UNCERTAIN_THRESHOLD": "0.81",
@@ -310,6 +354,8 @@ def test_settings_are_loaded_from_environment_and_validated() -> None:
     )
 
     assert settings == HealthAPISettings(
+        detector_model_path=Path("runtime/models/detector/best.pt"),
+        health_model_path=Path("runtime/models/health/best.pt"),
         detection_confidence=0.31,
         min_detection_confidence=0.55,
         health_uncertain_threshold=0.81,
@@ -318,6 +364,18 @@ def test_settings_are_loaded_from_environment_and_validated() -> None:
         verify_model_sha256=False,
         device="cpu",
     )
+
+
+def test_blank_model_path_environment_uses_local_defaults() -> None:
+    settings = HealthAPISettings.from_env(
+        {
+            "DETECTOR_MODEL_PATH": "  ",
+            "HEALTH_MODEL_PATH": "",
+        }
+    )
+
+    assert settings.detector_model_path == predictor.DETECTOR_MODEL_PATH
+    assert settings.health_model_path == predictor.HEALTH_MODEL_PATH
 
 
 @pytest.mark.parametrize(
