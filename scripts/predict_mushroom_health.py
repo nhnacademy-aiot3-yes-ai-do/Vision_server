@@ -374,6 +374,7 @@ def base_response(
     detector: Any,
     classifier: Any,
     detection_threshold: float,
+    min_detection_confidence: float,
     health_threshold: float,
 ) -> dict[str, Any]:
     return {
@@ -387,6 +388,7 @@ def base_response(
         ),
         "thresholds": {
             "detection": detection_threshold,
+            "min_detection_confidence": min_detection_confidence,
             "health_uncertain": health_threshold,
             "health_confidence": health_threshold,
         },
@@ -421,6 +423,7 @@ def predict_health(
         detector,
         classifier,
         detection_threshold,
+        min_detection_confidence,
         health_threshold,
     )
     # Preserve the caller's image object and mode.
@@ -760,6 +763,7 @@ def invalid_response(
     status: str,
     *,
     detection_threshold: float,
+    min_detection_confidence: float = DEFAULT_MIN_DETECTION_CONFIDENCE,
     health_threshold: float,
     detail: str,
 ) -> dict[str, Any]:
@@ -770,6 +774,7 @@ def invalid_response(
         "health_model": HEALTH_MODEL_NAME,
         "thresholds": {
             "detection": detection_threshold,
+            "min_detection_confidence": min_detection_confidence,
             "health_uncertain": health_threshold,
             "health_confidence": health_threshold,
         },

@@ -20,6 +20,7 @@ class CamelModel(BaseModel):
 
 class HealthThresholds(CamelModel):
     detection: float = Field(ge=0.0, le=1.0)
+    min_detection_confidence: float = Field(ge=0.0, le=1.0)
     health_uncertain: float = Field(ge=0.0, le=1.0)
 
 
@@ -92,6 +93,9 @@ class HealthCheckResponse(CamelModel):
                 "health_model": internal.get("health_model"),
                 "thresholds": {
                     "detection": thresholds.get("detection"),
+                    "min_detection_confidence": thresholds.get(
+                        "min_detection_confidence"
+                    ),
                     "health_uncertain": thresholds.get(
                         "health_uncertain"
                     ),
@@ -106,12 +110,14 @@ def safe_error_response(
     *,
     status: str,
     detection_threshold: float,
+    min_detection_confidence: float,
     health_threshold: float,
     public_message: str,
 ) -> HealthCheckResponse:
     internal = predictor.invalid_response(
         status,
         detection_threshold=detection_threshold,
+        min_detection_confidence=min_detection_confidence,
         health_threshold=health_threshold,
         detail=public_message,
     )

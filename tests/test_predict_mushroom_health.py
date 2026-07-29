@@ -146,6 +146,9 @@ def test_no_detection_does_not_call_health_classifier() -> None:
     assert result["results"] == []
     assert result["detector_model"] == detector.model_name
     assert result["health_model"] == classifier.model_name
+    assert result["thresholds"]["min_detection_confidence"] == pytest.approx(
+        0.50
+    )
     assert result["thresholds"]["health_confidence"] == pytest.approx(0.70)
     assert len(detector.calls) == 1
     assert classifier.calls == []

@@ -352,6 +352,7 @@ def test_valid_image_health_status_and_camel_case_contract(
     assert payload["status"] == "SUCCESS"
     assert payload["thresholds"] == {
         "detection": pytest.approx(0.25),
+        "minDetectionConfidence": pytest.approx(0.50),
         "healthUncertain": pytest.approx(0.70),
     }
     assert len(payload["results"]) == 1
@@ -656,6 +657,11 @@ def test_openapi_documents_multipart_contract_and_public_response(
     assert "analysisType" in properties
     assert "detectorModel" in properties
     assert "analysis_type" not in properties
+    threshold_properties = schema["components"]["schemas"][
+        "HealthThresholds"
+    ]["properties"]
+    assert "minDetectionConfidence" in threshold_properties
+    assert "min_detection_confidence" not in threshold_properties
     result_properties = schema["components"]["schemas"][
         "MushroomHealthResult"
     ]["properties"]

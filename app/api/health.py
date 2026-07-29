@@ -33,6 +33,9 @@ def _error_json(
     response = safe_error_response(
         status=error.status,
         detection_threshold=service.settings.detection_confidence,
+        min_detection_confidence=(
+            service.settings.min_detection_confidence
+        ),
         health_threshold=service.settings.health_uncertain_threshold,
         public_message=error.public_message,
     )

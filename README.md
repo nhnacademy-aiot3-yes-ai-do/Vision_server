@@ -81,6 +81,7 @@ curl -X POST \
   "healthModel": "mushroom-health-yolo11n-date-camera-holdout-v1",
   "thresholds": {
     "detection": 0.25,
+    "minDetectionConfidence": 0.5,
     "healthUncertain": 0.7
   },
   "results": [
