@@ -34,9 +34,9 @@ class MushroomHealthResult(CamelModel):
         "DISEASE_SUSPECTED",
         "UNCERTAIN",
     ]
-    health_confidence: float = Field(ge=0.0, le=1.0)
-    healthy_probability: float = Field(ge=0.0, le=1.0)
-    disease_suspected_probability: float = Field(ge=0.0, le=1.0)
+    health_confidence: float | None = Field(ge=0.0, le=1.0)
+    healthy_probability: float | None = Field(ge=0.0, le=1.0)
+    disease_suspected_probability: float | None = Field(ge=0.0, le=1.0)
     bbox: list[int] = Field(min_length=4, max_length=4)
     crop_bbox: list[int] = Field(min_length=4, max_length=4)
 

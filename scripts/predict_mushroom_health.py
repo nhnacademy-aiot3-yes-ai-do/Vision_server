@@ -50,9 +50,13 @@ EXPECTED_MODEL_SHA256 = {
 DETECTOR_IMAGE_SIZE = 640
 HEALTH_IMAGE_SIZE = 320
 DEFAULT_DETECTION_CONFIDENCE = 0.25
+DEFAULT_MIN_DETECTION_CONFIDENCE = 0.50
 DEFAULT_HEALTH_THRESHOLD = 0.70
 DEFAULT_PADDING_RATIO = 0.15
-LOW_DETECTION_CONFIDENCE = 0.50
+LOW_DETECTION_CONFIDENCE_WARNING = (
+    "LOW_DETECTION_CONFIDENCE: 품종 탐지 신뢰도가 낮아 건강 상태를 "
+    "판단하지 않았습니다."
+)
 MAX_IMAGE_PIXELS = 100_000_000
 SPECIES_BY_CLASS_ID = {
     0: "느타리",
@@ -397,6 +401,7 @@ def predict_health(
     detector: Any,
     classifier: Any,
     detection_threshold: float = DEFAULT_DETECTION_CONFIDENCE,
+    min_detection_confidence: float = DEFAULT_MIN_DETECTION_CONFIDENCE,
     health_threshold: float = DEFAULT_HEALTH_THRESHOLD,
     padding_ratio: float = DEFAULT_PADDING_RATIO,
 ) -> dict[str, Any]:
@@ -406,6 +411,8 @@ def predict_health(
         raise ValueError("이미지가 안전 픽셀 상한을 초과했습니다")
     if not 0.0 <= detection_threshold <= 1.0:
         raise ValueError("detection threshold 범위 오류")
+    if not 0.0 <= min_detection_confidence <= 1.0:
+        raise ValueError("minimum detection confidence 범위 오류")
     if not 0.0 <= health_threshold <= 1.0:
         raise ValueError("health threshold 범위 오류")
     if not 0.0 <= padding_ratio <= 0.5:
@@ -445,23 +452,28 @@ def predict_health(
             boxes,
             padding_ratio=padding_ratio,
         )
-        crop = inference_image.crop(crop_box)
-        if crop.width <= 0 or crop.height <= 0:
-            raise ValueError("건강 분류 crop이 비었습니다")
-        healthy, disease = _invoke_classifier(classifier, crop)
-        status, confidence = health_status(
-            healthy,
-            disease,
-            health_threshold,
-        )
         detection_confidences = [float(item.confidence) for item in items]
         minimum_detection = min(detection_confidences)
-        if minimum_detection < LOW_DETECTION_CONFIDENCE:
-            response["warnings"].append(
-                f"LOW_DETECTION_CONFIDENCE: {species}의 일부 탐지 confidence가 "
-                f"{LOW_DETECTION_CONFIDENCE:.2f} 미만입니다."
+        if minimum_detection < min_detection_confidence:
+            healthy = None
+            disease = None
+            status = "UNCERTAIN"
+            confidence = None
+            if LOW_DETECTION_CONFIDENCE_WARNING not in response["warnings"]:
+                response["warnings"].append(
+                    LOW_DETECTION_CONFIDENCE_WARNING
+                )
+        else:
+            crop = inference_image.crop(crop_box)
+            if crop.width <= 0 or crop.height <= 0:
+                raise ValueError("건강 분류 crop이 비었습니다")
+            healthy, disease = _invoke_classifier(classifier, crop)
+            status, confidence = health_status(
+                healthy,
+                disease,
+                health_threshold,
             )
-        if status == "UNCERTAIN":
+        if status == "UNCERTAIN" and confidence is not None:
             response["warnings"].append(
                 f"UNCERTAIN: {species} 건강 confidence가 "
                 f"{health_threshold:.2f} 미만입니다."
@@ -517,9 +529,15 @@ def draw_annotated(
         bbox = tuple(int(value) for value in item["bbox"])
         color = colors[class_id]
         draw.rectangle(bbox, outline=color, width=max(2, annotated.width // 500))
+        health_confidence = item.get("health_confidence")
+        confidence_text = (
+            f"{float(health_confidence):.3f}"
+            if health_confidence is not None
+            else "n/a"
+        )
         text = (
             f"{item['species']} | {item['health_status']} "
-            f"{float(item['health_confidence']):.3f}"
+            f"{confidence_text}"
         )
         text_box = draw.textbbox((bbox[0], bbox[1]), text, font=font)
         text_height = text_box[3] - text_box[1] + 8

@@ -295,6 +295,7 @@ def post_image(
 def settings() -> HealthAPISettings:
     return HealthAPISettings(
         detection_confidence=0.25,
+        min_detection_confidence=0.50,
         health_uncertain_threshold=0.70,
         padding_ratio=0.15,
         max_upload_bytes=4096,
@@ -366,6 +367,91 @@ def test_valid_image_health_status_and_camel_case_contract(
     assert "analysis_type" not in payload
     assert "health_status" not in result
     assert registry.detector.calls[-1]["threshold"] == pytest.approx(0.25)
+
+
+def test_low_detection_confidence_returns_null_health_values(
+    api_client: DirectASGIClient,
+    registry: FakeRegistry,
+) -> None:
+    registry.detector.detections[0] = predictor.Detection(
+        class_id=0,
+        species="느타리",
+        bbox=(10, 10, 70, 60),
+        confidence=0.49,
+    )
+
+    response = post_image(api_client, jpeg_bytes())
+
+    assert response.status_code == 200
+    result = response.json()["results"][0]
+    assert result["healthStatus"] == "UNCERTAIN"
+    assert result["healthConfidence"] is None
+    assert result["healthyProbability"] is None
+    assert result["diseaseSuspectedProbability"] is None
+    assert registry.classifier.calls == []
+    assert predictor.LOW_DETECTION_CONFIDENCE_WARNING in response.json()[
+        "warnings"
+    ]
+    serialized = response.content.decode("utf-8")
+    assert '"healthConfidence":null' in serialized
+    assert '"healthyProbability":null' in serialized
+    assert '"diseaseSuspectedProbability":null' in serialized
+
+
+def test_detection_confidence_equal_to_minimum_runs_health_classifier(
+    api_client: DirectASGIClient,
+    registry: FakeRegistry,
+) -> None:
+    registry.detector.detections[0] = predictor.Detection(
+        class_id=0,
+        species="느타리",
+        bbox=(10, 10, 70, 60),
+        confidence=0.50,
+    )
+
+    response = post_image(api_client, jpeg_bytes())
+
+    assert response.status_code == 200
+    result = response.json()["results"][0]
+    assert result["healthStatus"] == "HEALTHY"
+    assert result["healthConfidence"] == pytest.approx(0.95)
+    assert len(registry.classifier.calls) == 1
+    assert predictor.LOW_DETECTION_CONFIDENCE_WARNING not in response.json()[
+        "warnings"
+    ]
+
+
+def test_low_detection_confidence_is_isolated_per_species(
+    api_client: DirectASGIClient,
+    registry: FakeRegistry,
+) -> None:
+    registry.detector.detections = [
+        predictor.Detection(
+            class_id=0,
+            species="느타리",
+            bbox=(5, 5, 35, 35),
+            confidence=0.49,
+        ),
+        predictor.Detection(
+            class_id=4,
+            species="표고",
+            bbox=(60, 20, 95, 70),
+            confidence=0.93,
+        ),
+    ]
+    registry.classifier.probabilities = [(0.10, 0.90)]
+
+    response = post_image(api_client, jpeg_bytes())
+
+    assert response.status_code == 200
+    by_species = {
+        result["species"]: result for result in response.json()["results"]
+    }
+    assert by_species["느타리"]["healthStatus"] == "UNCERTAIN"
+    assert by_species["느타리"]["healthConfidence"] is None
+    assert by_species["표고"]["healthStatus"] == "DISEASE_SUSPECTED"
+    assert by_species["표고"]["healthConfidence"] == pytest.approx(0.90)
+    assert len(registry.classifier.calls) == 1
 
 
 def test_no_detection_returns_successful_empty_result_without_classifier(
@@ -570,4 +656,18 @@ def test_openapi_documents_multipart_contract_and_public_response(
     assert "analysisType" in properties
     assert "detectorModel" in properties
     assert "analysis_type" not in properties
+    result_properties = schema["components"]["schemas"][
+        "MushroomHealthResult"
+    ]["properties"]
+    for name in (
+        "healthConfidence",
+        "healthyProbability",
+        "diseaseSuspectedProbability",
+    ):
+        types = {
+            option.get("type")
+            for option in result_properties[name].get("anyOf", [])
+        }
+        assert "number" in types
+        assert "null" in types
     assert registry.get_models_calls == 0

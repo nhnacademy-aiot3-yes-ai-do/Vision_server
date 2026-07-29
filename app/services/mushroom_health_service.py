@@ -225,6 +225,9 @@ class MushroomHealthService:
             detector=detector,
             classifier=classifier,
             detection_threshold=self.settings.detection_confidence,
+            min_detection_confidence=(
+                self.settings.min_detection_confidence
+            ),
             health_threshold=self.settings.health_uncertain_threshold,
             padding_ratio=self.settings.padding_ratio,
         )

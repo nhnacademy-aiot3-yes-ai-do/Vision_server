@@ -300,6 +300,7 @@ def test_settings_are_loaded_from_environment_and_validated() -> None:
     settings = HealthAPISettings.from_env(
         {
             "HEALTH_DETECTION_CONFIDENCE": "0.31",
+            "HEALTH_MIN_DETECTION_CONFIDENCE": "0.55",
             "HEALTH_UNCERTAIN_THRESHOLD": "0.81",
             "HEALTH_PADDING_RATIO": "0.2",
             "HEALTH_MAX_UPLOAD_BYTES": "2048",
@@ -310,6 +311,7 @@ def test_settings_are_loaded_from_environment_and_validated() -> None:
 
     assert settings == HealthAPISettings(
         detection_confidence=0.31,
+        min_detection_confidence=0.55,
         health_uncertain_threshold=0.81,
         padding_ratio=0.2,
         max_upload_bytes=2048,
@@ -322,6 +324,7 @@ def test_settings_are_loaded_from_environment_and_validated() -> None:
     ("name", "value"),
     [
         ("HEALTH_DETECTION_CONFIDENCE", "1.1"),
+        ("HEALTH_MIN_DETECTION_CONFIDENCE", "1.01"),
         ("HEALTH_UNCERTAIN_THRESHOLD", "-0.1"),
         ("HEALTH_PADDING_RATIO", "0.51"),
         ("HEALTH_MAX_UPLOAD_BYTES", "0"),

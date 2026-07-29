@@ -41,6 +41,7 @@ OpenAPI 문서는 서버 실행 중 `/docs`, schema는 `/openapi.json`에서 확
 | 환경변수 | 기본값 | 허용 범위 |
 | --- | ---: | --- |
 | `HEALTH_DETECTION_CONFIDENCE` | `0.25` | 0~1 |
+| `HEALTH_MIN_DETECTION_CONFIDENCE` | `0.50` | 0~1 |
 | `HEALTH_UNCERTAIN_THRESHOLD` | `0.70` | 0~1 |
 | `HEALTH_PADDING_RATIO` | `0.15` | 0~0.5 |
 | `HEALTH_MAX_UPLOAD_BYTES` | `10485760` | 1 byte~100 MiB |
@@ -115,9 +116,13 @@ curl -X POST \
 | 422 | FastAPI validation error | `image` 필드 누락 |
 | 500 | `INFERENCE_FAILED` | 상세 예외를 숨긴 모델 추론 실패 |
 
-`LOW_DETECTION_CONFIDENCE`, `MULTIPLE_SPECIES_DETECTED` 및 `UNCERTAIN`은
-필요할 때 응답 `warnings` 또는 품종별 `healthStatus`로 제공됩니다. 로컬
-경로, 모델 파일 경로와 stack trace는 외부 JSON에 포함하지 않습니다.
+품종별 최소 탐지 confidence가 `HEALTH_MIN_DETECTION_CONFIDENCE`보다 낮으면
+그 품종의 건강 분류기를 호출하지 않습니다. 이때 `healthStatus`는
+`UNCERTAIN`, 건강 confidence와 두 클래스 확률은 JSON `null`이며
+`LOW_DETECTION_CONFIDENCE` 경고가 반환됩니다. 다른 품종은 독립적으로
+분석합니다. `MULTIPLE_SPECIES_DETECTED` 및 건강 confidence 기반
+`UNCERTAIN`도 필요할 때 제공됩니다. 로컬 경로, 모델 파일 경로와 stack
+trace는 외부 JSON에 포함하지 않습니다.
 
 ## 동시성과 안전
 

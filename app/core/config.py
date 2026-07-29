@@ -60,6 +60,9 @@ def _parse_bool(
 @dataclass(frozen=True)
 class HealthAPISettings:
     detection_confidence: float = predictor.DEFAULT_DETECTION_CONFIDENCE
+    min_detection_confidence: float = (
+        predictor.DEFAULT_MIN_DETECTION_CONFIDENCE
+    )
     health_uncertain_threshold: float = predictor.DEFAULT_HEALTH_THRESHOLD
     padding_ratio: float = predictor.DEFAULT_PADDING_RATIO
     max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES
@@ -70,6 +73,10 @@ class HealthAPISettings:
         if not 0.0 <= self.detection_confidence <= 1.0:
             raise ValueError(
                 "HEALTH_DETECTION_CONFIDENCE must be between 0 and 1"
+            )
+        if not 0.0 <= self.min_detection_confidence <= 1.0:
+            raise ValueError(
+                "HEALTH_MIN_DETECTION_CONFIDENCE must be between 0 and 1"
             )
         if not 0.0 <= self.health_uncertain_threshold <= 1.0:
             raise ValueError(
@@ -95,6 +102,11 @@ class HealthAPISettings:
                 source,
                 "HEALTH_DETECTION_CONFIDENCE",
                 predictor.DEFAULT_DETECTION_CONFIDENCE,
+            ),
+            min_detection_confidence=_parse_float(
+                source,
+                "HEALTH_MIN_DETECTION_CONFIDENCE",
+                predictor.DEFAULT_MIN_DETECTION_CONFIDENCE,
             ),
             health_uncertain_threshold=_parse_float(
                 source,

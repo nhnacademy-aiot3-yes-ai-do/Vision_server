@@ -152,6 +152,120 @@ def test_no_detection_does_not_call_health_classifier() -> None:
     json.dumps(result, ensure_ascii=False, allow_nan=False)
 
 
+def test_detection_confidence_below_minimum_skips_classifier() -> None:
+    image = Image.new("RGB", (100, 80), "white")
+    detector = FakeDetector(
+        [
+            detection(
+                class_id=0,
+                species="느타리",
+                bbox=(10, 10, 40, 50),
+                confidence=0.90,
+            ),
+            detection(
+                class_id=0,
+                species="느타리",
+                bbox=(45, 15, 80, 60),
+                confidence=0.49,
+            ),
+        ]
+    )
+    classifier = FakeClassifier([])
+
+    response = prediction.predict_health(
+        image,
+        detector=detector,
+        classifier=classifier,
+        min_detection_confidence=0.50,
+    )
+
+    result = response["results"][0]
+    assert classifier.calls == []
+    assert result["detection_confidence"] == pytest.approx(0.90)
+    assert result["detection_confidence_min"] == pytest.approx(0.49)
+    assert result["health_status"] == "UNCERTAIN"
+    assert result["health_confidence"] is None
+    assert result["healthy_probability"] is None
+    assert result["disease_suspected_probability"] is None
+    assert prediction.LOW_DETECTION_CONFIDENCE_WARNING in response["warnings"]
+    assert not any(
+        warning.startswith("UNCERTAIN: 느타리 건강 confidence")
+        for warning in response["warnings"]
+    )
+    assert prediction.draw_annotated(image, response).size == image.size
+
+
+def test_detection_confidence_equal_to_minimum_runs_classifier() -> None:
+    image = Image.new("RGB", (100, 80), "white")
+    detector = FakeDetector(
+        [
+            detection(
+                class_id=0,
+                species="느타리",
+                bbox=(10, 10, 80, 70),
+                confidence=0.50,
+            )
+        ]
+    )
+    classifier = FakeClassifier([(0.95, 0.05)])
+
+    response = prediction.predict_health(
+        image,
+        detector=detector,
+        classifier=classifier,
+        min_detection_confidence=0.50,
+    )
+
+    result = response["results"][0]
+    assert len(classifier.calls) == 1
+    assert result["health_status"] == "HEALTHY"
+    assert result["health_confidence"] == pytest.approx(0.95)
+    assert result["healthy_probability"] == pytest.approx(0.95)
+    assert result["disease_suspected_probability"] == pytest.approx(0.05)
+    assert prediction.LOW_DETECTION_CONFIDENCE_WARNING not in response[
+        "warnings"
+    ]
+
+
+def test_low_confidence_only_skips_its_species_group() -> None:
+    image = Image.new("RGB", (100, 80), "white")
+    detector = FakeDetector(
+        [
+            detection(
+                class_id=0,
+                species="느타리",
+                bbox=(5, 5, 40, 50),
+                confidence=0.49,
+            ),
+            detection(
+                class_id=4,
+                species="표고",
+                bbox=(55, 10, 95, 70),
+                confidence=0.90,
+            ),
+        ]
+    )
+    classifier = FakeClassifier([(0.08, 0.92)])
+
+    response = prediction.predict_health(
+        image,
+        detector=detector,
+        classifier=classifier,
+        min_detection_confidence=0.50,
+    )
+
+    by_species = {
+        item["species"]: item for item in response["results"]
+    }
+    assert len(classifier.calls) == 1
+    assert by_species["느타리"]["health_status"] == "UNCERTAIN"
+    assert by_species["느타리"]["health_confidence"] is None
+    assert by_species["느타리"]["healthy_probability"] is None
+    assert by_species["느타리"]["disease_suspected_probability"] is None
+    assert by_species["표고"]["health_status"] == "DISEASE_SUSPECTED"
+    assert by_species["표고"]["health_confidence"] == pytest.approx(0.92)
+
+
 def test_multiple_species_are_classified_once_per_species_group() -> None:
     image = Image.new("RGB", (100, 80), (50, 60, 70))
     detector = FakeDetector(
