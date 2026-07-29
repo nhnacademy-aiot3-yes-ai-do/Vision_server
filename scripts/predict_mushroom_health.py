@@ -707,15 +707,17 @@ class UltralyticsHealthClassifier:
 def load_fixed_models(
     *,
     device: str = "auto",
+    verify_sha256: bool = True,
 ) -> tuple[UltralyticsDetector, UltralyticsHealthClassifier]:
     if not DETECTOR_MODEL_PATH.is_file() or not HEALTH_MODEL_PATH.is_file():
         raise FileNotFoundError("고정 detector 또는 health best.pt가 없습니다")
-    for path, expected_hash in EXPECTED_MODEL_SHA256.items():
-        actual_hash = file_fingerprint(path)[2]
-        if actual_hash != expected_hash:
-            raise RuntimeError(
-                f"승인된 고정 모델 SHA-256 불일치: {path.parent.name}"
-            )
+    if verify_sha256:
+        for path, expected_hash in EXPECTED_MODEL_SHA256.items():
+            actual_hash = file_fingerprint(path)[2]
+            if actual_hash != expected_hash:
+                raise RuntimeError(
+                    f"승인된 고정 모델 SHA-256 불일치: {path.parent.name}"
+                )
     from ultralytics import YOLO
 
     detector = YOLO(str(DETECTOR_MODEL_PATH.resolve()), task="detect")
