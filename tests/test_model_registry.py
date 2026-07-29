@@ -241,6 +241,49 @@ def test_settings_model_paths_are_forwarded_to_loader(
     ]
 
 
+@pytest.mark.parametrize(
+    ("raw_device", "expected_device"),
+    [
+        ("cpu", "cpu"),
+        ("mps", "mps"),
+        ("cuda:0", "cuda:0"),
+        (" \t ", "auto"),
+    ],
+)
+def test_health_device_environment_is_normalized_and_forwarded_to_loader(
+    tmp_path: Path,
+    raw_device: str,
+    expected_device: str,
+) -> None:
+    detector_path, health_path = _fake_weights(tmp_path)
+    settings = HealthAPISettings.from_env(
+        {
+            "DETECTOR_MODEL_PATH": str(detector_path),
+            "HEALTH_MODEL_PATH": str(health_path),
+            "HEALTH_VERIFY_MODEL_SHA256": "false",
+            "HEALTH_DEVICE": raw_device,
+        }
+    )
+    received: list[dict[str, object]] = []
+
+    def loader(**kwargs: object) -> tuple[Any, Any]:
+        received.append(dict(kwargs))
+        return _valid_pair()
+
+    registry = ModelRegistry(settings, loader=loader)
+    registry.load()
+
+    assert settings.device == expected_device
+    assert received == [
+        {
+            "device": expected_device,
+            "verify_sha256": False,
+            "detector_path": detector_path,
+            "health_model_path": health_path,
+        }
+    ]
+
+
 def test_partial_loader_failure_leaves_zero_cached_models(
     tmp_path: Path,
 ) -> None:

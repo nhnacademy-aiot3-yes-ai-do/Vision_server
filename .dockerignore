@@ -4,6 +4,7 @@
 
 !.dockerignore
 !Dockerfile.template
+!requirements-common.txt
 !requirements-runtime.txt
 
 !app/

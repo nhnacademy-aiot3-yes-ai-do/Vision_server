@@ -4,7 +4,15 @@ PORT ?= 8000
 IMAGE_NAME ?= mushroom-vision-service:prototype
 BASE_IMAGE ?=
 
-.PHONY: test run prepare-models check-models check-base-image docker-build docker-run
+.PHONY: \
+	test run run-mps run-cpu install-mac doctor-mac \
+	prepare-models check-models check-base-image docker-build docker-run
+
+install-mac:
+	@$(PYTHON) -c 'import platform, sys; ok = platform.system() == "Darwin" and platform.machine() == "arm64"; print("Apple Silicon macOS required" if not ok else "Apple Silicon macOS detected"); sys.exit(0 if ok else 2)'
+	$(PYTHON) -m pip install --upgrade pip
+	$(PYTHON) -m pip install -r requirements-macos.txt
+	$(PYTHON) -m pip install -r requirements-dev.txt
 
 test:
 	$(PYTHON) -m pytest -q
@@ -14,6 +22,15 @@ run:
 		--host $(HOST) \
 		--port $(PORT) \
 		--workers 1
+
+run-mps:
+	HEALTH_DEVICE=mps $(MAKE) run
+
+run-cpu:
+	HEALTH_DEVICE=cpu $(MAKE) run
+
+doctor-mac:
+	$(PYTHON) scripts/check_runtime_environment.py
 
 prepare-models:
 	$(PYTHON) scripts/prepare_runtime_models.py

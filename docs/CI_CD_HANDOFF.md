@@ -30,13 +30,30 @@ Spring AI-Service만 ClusterIP를 통해 호출하는 구성을 기본으로 검
 
 ## Dependency files
 
-- `requirements-runtime.txt`: API와 추론 runtime의 검증된 direct version
-- `requirements-dev.txt`: runtime을 포함하고 pytest를 추가한 기본 test 환경
+- `requirements-common.txt`: OS와 accelerator에 독립적인 API·추론 direct
+  dependency
+- `requirements-macos.txt`: Apple Silicon host용 common dependency와
+  `torch==2.11.0`, `torchvision==0.26.0`
+- `requirements-runtime.txt`: Linux container용 common dependency include;
+  PyTorch와 torchvision은 승인된 base image가 제공
+- `requirements-dev.txt`: 선택한 platform runtime에 추가하는 pytest 등
+  개발·테스트 dependency
 
-현재 CUDA suffix가 붙은 PyTorch pin은 확인된 prototype 환경을 기록한
-것입니다. 다른 package index에서 자동으로 호환된다고 가정하지 않습니다.
-`TODO(BASE_IMAGE)`와 `TODO(GPU)`가 결정되면 base digest, PyTorch wheel
-index와 requirements를 한 세트로 검증하고 release 증거에 남깁니다.
+Mac job은 `requirements-macos.txt`와 `requirements-dev.txt`를 함께
+사용합니다. CUDA local version suffix가 붙은 wheel 또는 CUDA package
+index를 macOS job에 설치하지 않습니다.
+
+Linux CPU와 Linux CUDA는 같은 dependency 이름을 사용하더라도 별도 배포
+profile입니다. `TODO(BASE_IMAGE)`와 `TODO(GPU)`가 결정되면 각 profile의
+base digest, CPU/CUDA runtime, 아키텍처, PyTorch/torchvision 버전을 한
+세트로 검증하고 release 증거에 남깁니다. `requirements-runtime.txt`만
+bare host에 설치해 완전한 추론 환경이 된다고 가정하지 않습니다.
+
+Mac profile은 현재 검증 환경과 같은 release pair인 PyTorch 2.11 /
+torchvision 0.26을 사용하되 CUDA suffix는 사용하지 않습니다. Linux
+base의 CUDA build suffix와 driver 조합은 별도 승인 대상입니다. Linux
+base가 이 release pair와 다른 버전을 쓰려면 같은 두 `best.pt`로 보호된
+registry/API integration을 다시 통과한 증거가 필요합니다.
 
 ## 제안 브랜치와 PR 경계
 
@@ -82,6 +99,30 @@ flowchart LR
 
 CI 기본 job은 실제 모델을 다운로드하거나 load하지 않습니다.
 
+### 플랫폼별 CI 역할
+
+| lane | dependency/runtime | 허용 검증 | 금지 또는 제한 |
+| --- | --- | --- | --- |
+| macOS arm64 | `requirements-macos.txt` + `requirements-dev.txt` | syntax, fake-model unit/API test, 경로·manifest 정적 검사 | CUDA wheel/index 설치 금지; 일반 shared runner에서 MPS와 실제 모델 성능을 보장하지 않음 |
+| Linux CPU | 승인된 CPU PyTorch/torchvision base + `requirements-runtime.txt` | unit/API test, CPU container startup 및 opt-in 모델 smoke | CUDA 동작을 검증했다고 해석하지 않음 |
+| Linux CUDA | 승인된 CUDA base + `requirements-runtime.txt` + NVIDIA runner | 보호된 실제 모델 integration, CUDA startup/inference smoke | 일반 PR과 credential 없는 runner에서 실행 금지 |
+
+Apple Silicon MPS 실제 모델 검증이 필요하면 승인 모델을 제공할 수 있는 전용
+Mac runner에서만 보호된 opt-in job으로 실행합니다. 해당 job은
+`torch.backends.mps.is_available()`을 먼저 확인하고 실제 선택 device를
+로그에 남겨야 합니다. `make doctor-mac`의 path-safe 결과를 진단 증거로
+사용할 수 있습니다. MPS가 없는 일반 Mac CI에서 CPU로 자동 대체된 성공을
+MPS 검증 성공으로 기록하지 않습니다.
+
+다음 항목은 CI owner가 확정해야 합니다.
+
+- `TODO(MAC_RUNNER)`: Apple Silicon 전용 runner와 MPS 검증 필요 여부
+- `TODO(MAC_WHEEL_SOURCE)`: 승인된 macOS arm64 wheel source와 cache 정책
+- `TODO(LINUX_CPU_BASE)`: CPU base image digest와 대상 아키텍처
+- `TODO(LINUX_CUDA_BASE)`: CUDA base image digest, driver/runtime 호환표
+- `TODO(PLATFORM_LOCK)`: platform별 transitive lock 또는 hash 정책
+- `TODO(MODEL_CREDENTIAL)`: 보호된 integration job의 모델 공급 방식
+
 ### 보호된 통합 단계
 
 다음 단계는 승인된 runner와 model credential이 있을 때만 실행합니다.
@@ -99,8 +140,9 @@ trace와 artifact에 secret 값, source URL 및 presigned URL을 남기지 않�
 
 `Dockerfile.template`은 `ARG BASE_IMAGE`에 기본값을 두지 않습니다.
 
-- `TODO(BASE_IMAGE)`: Python 3.12와 pinned PyTorch 조합을 제공하는 digest
-- `TODO(GPU)`: target이 CPU인지 GPU인지와 CUDA/runtime compatibility
+- `TODO(BASE_IMAGE)`: Python 3.12와 승인된 PyTorch/torchvision 조합을
+  제공하는 Linux CPU 또는 CUDA digest
+- `TODO(GPU)`: target이 CPU인지 GPU인지와 CUDA/driver/runtime compatibility
 - `TODO(REGISTRY)`: image registry, repository 및 retention
 - `TODO(NVIDIA_DEVICE_PLUGIN)`: GPU 사용 시 cluster 설치·버전·node label 확인
 
@@ -109,6 +151,19 @@ Java Spring 서비스 Dockerfile은 repository layout, image naming 및 CI stage
 `BASE_IMAGE`는 Java base image에서 유추하지 않고 별도로 승인해야 합니다.
 Java image tag, JVM 옵션 또는 Java 사용자 구성을 Vision template에 복사하지
 않습니다.
+
+CPU와 CUDA 이미지는 동일한 임의 base tag를 공유하는 하나의 profile로
+취급하지 않습니다. 각각 immutable digest와 테스트 증거를 갖는 별도
+profile로 build·tag·promotion합니다. base가 제공하는
+PyTorch/torchvision 버전은 애플리케이션 계약과 일치해야 하며
+`requirements-runtime.txt`가 accelerator wheel을 다시 설치하지 않습니다.
+
+Docker Desktop for Mac은 Linux VM 기반이므로 Apple Metal/MPS를 이
+container에 전달하지 않습니다. Mac host의 MPS 검증은
+`Dockerfile.template`이 아니라 host virtual environment에서 수행합니다.
+Mac에서 Linux image를 cross-build했다는 사실은 Linux CUDA startup 또는
+GPU inference 검증 증거가 아닙니다. CUDA image는 대상 Linux/NVIDIA
+runner에서 build하고 검증합니다.
 
 예상 build 진입점은 Make target입니다.
 

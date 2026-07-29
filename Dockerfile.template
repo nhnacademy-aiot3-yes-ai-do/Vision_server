@@ -1,8 +1,10 @@
 # syntax=docker/dockerfile:1.7
 #
-# Prototype template only. The team must approve and pass BASE_IMAGE.
+# Linux deployment prototype only; this is not a macOS/MPS image.
+# The team must approve and pass BASE_IMAGE.
 # TODO(BASE_IMAGE): pin an immutable Python 3.12/PyTorch image digest.
 # TODO(GPU): decide CPU or CUDA runtime after the deployment target is fixed.
+# The base must already contain a compatible torch/torchvision pair.
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
@@ -25,10 +27,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /opt/mushroom-vision
 
-# The approved base image/package index must provide the pinned PyTorch build
-# declared by requirements-runtime.txt. Do not place package-index credentials
-# in this file or in build arguments.
+# requirements-runtime contains platform-neutral service packages. The approved
+# Linux base supplies torch/torchvision; pip must not replace them with a Mac
+# wheel or an unapproved CUDA build. Do not place package-index credentials in
+# this file or in build arguments.
+COPY requirements-common.txt ./requirements-common.txt
 COPY requirements-runtime.txt ./requirements-runtime.txt
+RUN python -c "import torch, torchvision"
 RUN python -m pip install --no-cache-dir -r requirements-runtime.txt
 
 # Copy only the runtime surface. The allowlist in .dockerignore keeps datasets,

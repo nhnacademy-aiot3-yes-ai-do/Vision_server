@@ -1,4 +1,5 @@
--r requirements-runtime.txt
-
+# Install this after the platform runtime (requirements-macos.txt locally, or
+# requirements-runtime.txt in a team-approved Linux PyTorch environment).
 # Tests use the repository's direct ASGI client; httpx is intentionally absent.
 pytest==9.1.1
+tqdm==4.69.1

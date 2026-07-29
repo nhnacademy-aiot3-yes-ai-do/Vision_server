@@ -1,10 +1,6 @@
-# Versions verified with Python 3.12.3 in the current prototype environment.
-# The approved BASE_IMAGE/package index must provide the matching CUDA wheels.
-fastapi==0.140.0
-uvicorn==0.51.0
-python-multipart==0.0.32
-pillow==12.2.0
-torch==2.11.0+cu128
-torchvision==0.26.0+cu128
-ultralytics==8.4.106
-pydantic==2.13.4
+# Linux deployment entry point.
+#
+# The team-approved CPU or CUDA PyTorch BASE_IMAGE must already provide a
+# mutually compatible torch/torchvision pair. Installing this file must not
+# replace that platform runtime with a macOS wheel or an unapproved CUDA build.
+-r requirements-common.txt

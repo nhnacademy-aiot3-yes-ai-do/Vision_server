@@ -1,0 +1,8 @@
+# Direct, platform-neutral dependencies used by Mushroom Vision Service.
+# PyTorch and torchvision are selected by the platform-specific runtime.
+fastapi==0.140.0
+uvicorn==0.51.0
+python-multipart==0.0.32
+pillow==12.2.0
+ultralytics==8.4.106
+pydantic==2.13.4

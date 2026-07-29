@@ -608,6 +608,36 @@ def test_success_response_contains_no_local_absolute_path(
     assert "C:\\\\" not in serialized
 
 
+def test_device_setting_is_not_exposed_in_response_or_openapi() -> None:
+    settings = HealthAPISettings(
+        detection_confidence=0.25,
+        min_detection_confidence=0.50,
+        health_uncertain_threshold=0.70,
+        padding_ratio=0.15,
+        max_upload_bytes=4096,
+        verify_model_sha256=False,
+        device="cuda:0",
+    )
+    registry = FakeRegistry(settings)
+    application = create_app(
+        settings=settings,
+        registry=registry,  # type: ignore[arg-type]
+    )
+
+    with DirectASGIClient(application) as client:
+        response = post_image(client, jpeg_bytes())
+        openapi = client.request("GET", "/openapi.json")
+
+    assert response.status_code == 200
+    assert openapi.status_code == 200
+    response_text = response.content.decode("utf-8")
+    openapi_text = openapi.content.decode("utf-8")
+    for serialized in (response_text, openapi_text):
+        assert "cuda:0" not in serialized
+        assert '"device"' not in serialized
+        assert "HEALTH_DEVICE" not in serialized
+
+
 def test_registry_loads_once_for_multiple_requests_and_shuts_down_once(
     settings: HealthAPISettings,
 ) -> None:
