@@ -36,7 +36,7 @@ Vision_server는 MinIO endpoint, bucket, object key 또는 credential을 알지
 FastAPI가 다음 route를 등록한 상태로 Uvicorn이 요청을 기다립니다.
 
 ```text
-POST /api/internal/mushrooms/health-check
+POST /api/v1/internal/mushrooms/health-check
 ```
 
 OpenFeign이 이 URL로 multipart `image`를 보내면 FastAPI가 route를 찾아

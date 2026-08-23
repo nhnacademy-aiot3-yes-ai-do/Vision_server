@@ -129,7 +129,7 @@ curl --fail-with-body \
   --request POST \
   --header "accept: application/json" \
   --form "image=@sample.jpg" \
-  http://localhost:8000/api/internal/mushrooms/health-check
+  http://localhost:8000/api/v1/internal/mushrooms/health-check
 ```
 
 응답이 camelCase이고 `status`, `results`, `warnings` 계약을 따르는지

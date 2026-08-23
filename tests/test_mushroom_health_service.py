@@ -173,10 +173,12 @@ def settings(
     *,
     max_upload_bytes: int = 10 * 1024 * 1024,
     health_threshold: float = 0.70,
+    max_inflight_requests: int = 1,
 ) -> HealthAPISettings:
     return HealthAPISettings(
         max_upload_bytes=max_upload_bytes,
         health_uncertain_threshold=health_threshold,
+        max_inflight_requests=max_inflight_requests,
     )
 
 
@@ -336,7 +338,7 @@ def test_inference_lock_serializes_concurrent_model_calls(
     async def scenario() -> list[dict[str, Any]]:
         service = MushroomHealthService(
             registry,  # type: ignore[arg-type]
-            settings(),
+            settings(max_inflight_requests=4),
             inference_lock=asyncio.Lock(),
         )
         uploads = [FakeUpload(jpeg_bytes()) for _ in range(4)]
@@ -355,6 +357,100 @@ def test_inference_lock_serializes_concurrent_model_calls(
     assert len(responses) == 4
     assert max_active == 1
     assert detector.calls == classifier.calls == registry.get_calls == 4
+
+
+# 처리 한도를 넘은 요청은 본문을 읽지 않고 거부하며, 완료 후 permit을 반환하는지 확인한다.
+def test_admission_limit_rejects_excess_before_read_and_releases_permit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    read_uploads: list[FakeUpload] = []
+    original_read = service_module._read_upload_limited
+
+    def tracking_read(
+        upload: FakeUpload,
+        max_upload_bytes: int,
+    ) -> bytes:
+        read_uploads.append(upload)
+        return original_read(upload, max_upload_bytes)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        service_module,
+        "_read_upload_limited",
+        tracking_read,
+    )
+    detector = FakeDetector([oyster_detection((10, 10, 80, 70))])
+    classifier = FakeClassifier((0.9, 0.1))
+    registry = FakeRegistry(detector, classifier)
+    first = FakeUpload(jpeg_bytes())
+    second = FakeUpload(jpeg_bytes())
+    third = FakeUpload(jpeg_bytes())
+
+    async def scenario() -> tuple[
+        dict[str, Any],
+        HealthServiceError,
+        dict[str, Any],
+    ]:
+        prediction_started = asyncio.Event()
+        release_prediction = asyncio.Event()
+
+        async def controlled_run_sync(
+            _executor: Any,
+            function: Any,
+        ) -> Any:
+            is_prediction = (
+                getattr(getattr(function, "func", None), "__name__", "")
+                == "_predict_sync"
+            )
+            if is_prediction:
+                prediction_started.set()
+                await release_prediction.wait()
+            return function()
+
+        monkeypatch.setattr(
+            service_module,
+            "run_sync_in_executor",
+            controlled_run_sync,
+        )
+        service = MushroomHealthService(
+            registry,  # type: ignore[arg-type]
+            settings(max_inflight_requests=1),
+            inference_lock=asyncio.Lock(),
+        )
+        first_task = asyncio.create_task(
+            service.analyze_upload(first)  # type: ignore[arg-type]
+        )
+        try:
+            await asyncio.wait_for(prediction_started.wait(), timeout=1)
+
+            with pytest.raises(HealthServiceError) as captured:
+                await service.analyze_upload(second)  # type: ignore[arg-type]
+
+            assert captured.value.http_status == 429
+            assert captured.value.status == "SERVICE_BUSY"
+            assert captured.value.public_message == (
+                "현재 분석 요청이 많습니다. 잠시 후 다시 시도해 주세요."
+            )
+            assert second not in read_uploads
+            assert second.closed
+
+            release_prediction.set()
+            first_response = await first_task
+            third_response = await service.analyze_upload(  # type: ignore[arg-type]
+                third
+            )
+            return first_response, captured.value, third_response
+        finally:
+            release_prediction.set()
+            if not first_task.done():
+                await first_task
+            service.close()
+
+    first_response, _error, third_response = asyncio.run(scenario())
+
+    assert first_response["status"] == "SUCCESS"
+    assert third_response["status"] == "SUCCESS"
+    assert read_uploads == [first, third]
+    assert detector.calls == classifier.calls == registry.get_calls == 2
 
 
 # 읽기·디코딩·추론 과정이 호출자가 제공한 원본 bytes 내용을 바꾸지 않는지 확인한다.

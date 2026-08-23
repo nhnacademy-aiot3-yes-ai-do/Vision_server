@@ -18,7 +18,7 @@ from app.services.mushroom_health_service import (
 
 LOGGER = logging.getLogger(__name__)
 # 모든 버섯 건강 판별 API는 이 공통 URL 접두사 아래에 등록된다.
-router = APIRouter(prefix="/api/internal/mushrooms", tags=["mushroom-health"])
+router = APIRouter(prefix="/api/v1/internal/mushrooms", tags=["mushroom-health"])
 
 
 # FastAPI 의존성 주입으로 lifespan에서 만든 단일 서비스 인스턴스를 꺼낸다.
@@ -67,6 +67,7 @@ def _error_json(
         400: {"model": HealthCheckResponse, "description": "빈 파일 또는 손상 이미지"},
         413: {"model": HealthCheckResponse, "description": "업로드 크기 제한 초과"},
         415: {"model": HealthCheckResponse, "description": "지원하지 않는 이미지 형식"},
+        429: {"model": HealthCheckResponse, "description": "동시 분석 요청 한도 초과"},
         422: {"description": "multipart image 필드 누락"},
         500: {"model": HealthCheckResponse, "description": "안전하게 숨긴 추론 실패"},
     },

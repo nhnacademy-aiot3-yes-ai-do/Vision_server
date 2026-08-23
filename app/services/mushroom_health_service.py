@@ -16,6 +16,10 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 from app.core.config import HealthAPISettings
 from app.core.model_registry import ModelRegistry, ModelRegistryError
+from app.services.inference_gateway import (
+    InferenceCapacityExceeded,
+    InferenceGateway,
+)
 from scripts import predict_mushroom_health as predictor
 
 
@@ -229,10 +233,14 @@ class MushroomHealthService:
         *,
         inference_lock: asyncio.Lock | None = None,
         executor: concurrent.futures.Executor | None = None,
+        inference_gateway: InferenceGateway | None = None,
     ) -> None:
         self.registry = registry
         self.settings = settings
         self.inference_lock = inference_lock or asyncio.Lock()
+        self.inference_gateway = inference_gateway or InferenceGateway(
+            settings.max_inflight_requests
+        )
         # app lifespan이 executor를 주입하면 소유하지 않고, 단독 사용 시에만 자체 생성·종료한다.
         self._owns_executor = executor is None
         self.executor = executor or concurrent.futures.ThreadPoolExecutor(
@@ -258,20 +266,12 @@ class MushroomHealthService:
         predictor.assert_deidentified_response(response)
         return response
 
-    # 메타데이터 확인 → 제한 읽기 → 이미지 디코딩 → 잠금 추론 순서로 한 요청을 처리한다.
-    async def analyze_upload(self, upload: UploadFile) -> dict[str, Any]:
-        try:
-            expected_format, _mime_type = _upload_rule(upload)
-        except Exception:
-            # 메타데이터 단계에서 거부되면 본문을 읽지 않았더라도 업로드 핸들은 반드시 닫는다.
-            try:
-                await run_sync_in_executor(
-                    self.executor,
-                    partial(_close_upload_sync, upload),
-                )
-            except Exception:
-                pass
-            raise
+    # permit을 획득한 요청의 본문 읽기부터 잠금 추론까지 수행한다.
+    async def _analyze_admitted_upload(
+        self,
+        upload: UploadFile,
+        expected_format: str,
+    ) -> dict[str, Any]:
         # 파일 I/O와 Pillow 디코딩은 이벤트 루프를 막지 않도록 executor에서 수행한다.
         payload = await run_sync_in_executor(
             self.executor,
@@ -307,6 +307,40 @@ class MushroomHealthService:
                 http_status=500,
                 status="INFERENCE_FAILED",
                 public_message="모델 추론을 완료하지 못했습니다.",
+            ) from exc
+
+    # 메타데이터 확인 → admission → 제한 읽기 → 이미지 디코딩 → 잠금 추론 순서로 처리한다.
+    async def analyze_upload(self, upload: UploadFile) -> dict[str, Any]:
+        try:
+            expected_format, _mime_type = _upload_rule(upload)
+        except Exception:
+            # 메타데이터 단계에서 거부되면 본문을 읽지 않았더라도 업로드 핸들은 반드시 닫는다.
+            try:
+                await run_sync_in_executor(
+                    self.executor,
+                    partial(_close_upload_sync, upload),
+                )
+            except Exception:
+                pass
+            raise
+        try:
+            async with self.inference_gateway.admit():
+                return await self._analyze_admitted_upload(
+                    upload,
+                    expected_format,
+                )
+        except InferenceCapacityExceeded as exc:
+            # 거부된 요청은 본문을 읽지 않더라도 임시 업로드 파일을 즉시 회수한다.
+            try:
+                await upload.close()
+            except Exception:
+                pass
+            raise HealthServiceError(
+                http_status=429,
+                status="SERVICE_BUSY",
+                public_message=(
+                    "현재 분석 요청이 많습니다. 잠시 후 다시 시도해 주세요."
+                ),
             ) from exc
 
     # 서비스가 자체 생성한 executor만 종료하여 lifespan이 공유하는 executor를 중복 종료하지 않는다.

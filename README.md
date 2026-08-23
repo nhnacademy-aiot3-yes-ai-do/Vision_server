@@ -38,19 +38,21 @@ OpenFeign 호출은 동기 요청·응답입니다. `POST` 요청이 FastAPI rou
 
 1. `app/main.py`: FastAPI 시작·종료와 모델 최초 로드
 2. `app/api/health.py`: OpenFeign 요청이 도착하는 REST endpoint
-3. `app/services/mushroom_health_service.py`: 업로드 검증과 추론 실행 조정
-4. `scripts/predict_mushroom_health.py`: 품종 탐지·crop·건강 분류
-5. `app/schemas/health.py`: AI-Server로 보내는 camelCase 응답 계약
-6. `app/core/model_registry.py`: 두 모델의 SHA-256·클래스 검증과 준비 상태
-7. `app/api/status.py`: liveness/readiness probe
+3. `app/services/inference_gateway.py`: 동시 분석 요청 admission 제한
+4. `app/services/mushroom_health_service.py`: 업로드 검증과 추론 실행 조정
+5. `scripts/predict_mushroom_health.py`: 품종 탐지·crop·건강 분류
+6. `app/schemas/health.py`: AI-Server로 보내는 camelCase 응답 계약
+7. `app/core/model_registry.py`: 두 모델의 SHA-256·클래스 검증과 준비 상태
+8. `app/api/status.py`: liveness/readiness probe
 
 요청 처리 순서는 다음과 같습니다.
 
 ```text
 multipart 이미지 수신
 → 확장자·MIME·크기·손상 여부 검증
+→ 동시 분석 permit 획득, 용량 초과 시 HTTP 429
 → 품종 탐지
-→ 같은 품종 bbox를 union하고 15% padding crop 생성
+→ 같은 품종 bbox를 union하고 설정된 비율로 padding crop 생성
 → 건강 분류
 → confidence 안전 규칙 적용
 → camelCase JSON 응답
@@ -114,7 +116,7 @@ Mac의 CPU/MPS 검증은 [Mac 검증 가이드](docs/MAC_VALIDATION.md)를
 
 ### 2. 모델 검증
 
-두 `best.pt`는 private Vision_server Git 저장소의 `runtime/models`에서
+두 `best.pt`는 공개 팀 Vision_server Git 저장소의 `runtime/models`에서
 코드와 함께 버전 관리합니다.
 
 ```bash
@@ -159,12 +161,12 @@ curl --fail-with-body \
   --request POST \
   --header "accept: application/json" \
   --form "image=@sample.jpg" \
-  http://localhost:8000/api/internal/mushrooms/health-check
+  http://localhost:8000/api/v1/internal/mushrooms/health-check
 ```
 
 - `/health/live`: FastAPI process가 살아 있으면 200
 - `/health/ready`: 두 모델이 검증·로드돼 요청 가능하면 200
-- `/api/internal/mushrooms/health-check`: JPG/JPEG, PNG, WEBP 이미지 분석
+- `/api/v1/internal/mushrooms/health-check`: JPG/JPEG, PNG, WEBP 이미지 분석
 - multipart 필드명: `image`
 - 기본 최대 업로드: 10 MiB
 
@@ -189,14 +191,14 @@ python -m pytest -q tests/test_model_registry.py -k integration
 모델 배포 흐름은 다음 하나로 고정합니다.
 
 ```text
-private Vision_server Git
+public team Vision_server Git
   └─ runtime/models/*/best.pt
         ↓ make verify-models
 models/model-manifest.json과 무결성 확인
         ↓
 Vision 코드와 모델을 하나의 Docker image로 build
         ↓
-private GitHub Container Registry(GHCR)에 push
+team GitHub Container Registry(GHCR)에 push
         ↓
 Kubernetes가 승인된 image digest로 pull
 ```
@@ -213,8 +215,9 @@ make docker-build \
   BASE_IMAGE=<team-approved-python-pytorch-image-or-digest>
 ```
 
-private 저장소와 private GHCR 권한을 유지하고, 모델 라이선스·데이터
-이용조건을 확인하기 전 모델 또는 이미지를 공개하지 않습니다. 자세한 정책은
+저장소가 public이므로 소스와 두 모델 가중치는 누구나 내려받을 수 있습니다.
+AIHub 데이터 출처 표기와 모델·런타임 라이선스 고지는 배포 전 유지합니다.
+GHCR 공개 범위는 Kubernetes pull 정책과 함께 별도로 확정합니다. 자세한 정책은
 [모델 관리](docs/MODEL_MANAGEMENT.md)와
 [CI/CD 인계](docs/CI_CD_HANDOFF.md)를 참고하세요.
 
@@ -229,6 +232,7 @@ private 저장소와 private GHCR 권한을 유지하고, 모델 라이선스·�
 | `HEALTH_UNCERTAIN_THRESHOLD` | `0.70` | 건강 상태 확정 기준 |
 | `HEALTH_PADDING_RATIO` | `0.15` | 품종별 crop padding |
 | `HEALTH_MAX_UPLOAD_BYTES` | `10485760` | 최대 업로드 크기 |
+| `HEALTH_MAX_INFLIGHT_REQUESTS` | `1` | 프로세스별 동시 분석 요청 상한 |
 | `HEALTH_VERIFY_MODEL_SHA256` | `true` | 시작 시 모델 SHA 검증 |
 | `HEALTH_DEVICE` | `auto` | `cpu`, `mps`, `cuda:0` 등 실행 장치 |
 
