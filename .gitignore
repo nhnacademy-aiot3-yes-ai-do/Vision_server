@@ -1,4 +1,4 @@
-# Python environments and caches
+# Python 가상환경, bytecode와 테스트·정적 분석 캐시
 .venv/
 venv/
 __pycache__/
@@ -9,12 +9,12 @@ __pycache__/
 .coverage
 htmlcov/
 
-# Local environment (the documented template remains tracked)
+# 실제 환경값은 제외하고 공개 가능한 예시 파일만 추적한다.
 .env
 .env.*
 !.env.example
 
-# Local datasets, evaluation images, and user uploads
+# 원본/평가 데이터셋, 외부 이미지와 사용자 업로드는 소스 저장소에 넣지 않는다.
 data/
 dataset/
 datasets/
@@ -29,39 +29,41 @@ validation_images/
 *.bmp
 *.tif
 *.tiff
+# Windows에서 복사된 NTFS 다운로드 출처 메타데이터는 어떤 표기 변형도 제외한다.
 *:Zone.Identifier
+*Zone.Identifier
 
-# Archives must not be used as repository or Docker inputs
+# 압축 원본은 저장소와 Docker 입력으로 사용하지 않는다.
 *.zip
 *.7z
 *.tar
 *.tar.gz
 *.tgz
 
-# Generated reports, training runs, artifacts, and logs
+# 생성 보고서, 학습 결과, 로컬 모델 산출물과 로그
 reports/*.csv
 artifacts/
 runs/
 weights/
 *.log
 
-# Model files: runtime directories may keep tracked documentation only
-runtime/models/*.pt
-runtime/models/**/*.pt
+# 학습 중간 산출물은 제외하되, 서비스가 사용하는 두 승인 모델만 private Git에서 추적한다.
 *.pt
 *.pth
 *.onnx
 *.engine
 *.ckpt
 *.safetensors
+!runtime/models/detector/best.pt
+!runtime/models/health/best.pt
 
-# Runtime caches created by Ultralytics and related libraries
+# Ultralytics와 관련 라이브러리가 실행 중 만드는 사용자 캐시
 .cache/
 .config/Ultralytics/
 .ultralytics/
 Ultralytics/
 
-# IDE and OS metadata
+# IDE와 운영체제의 개인별 메타데이터
 .idea/
 .vscode/
 .DS_Store

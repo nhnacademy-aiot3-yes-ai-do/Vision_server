@@ -25,9 +25,7 @@
       },
       "sizeBytes": 5447706,
       "sha256": "8d17eb493f2eeccccd832c56da2f346dfc730e5605c460016386c6bd0be10d32",
-      "sourceLocalPath": "artifacts/models/yolo11n_camera_holdout_v1/best.pt",
-      "runtimeRelativePath": "runtime/models/detector/best.pt",
-      "dockerRuntimePath": "/models/detector/best.pt",
+      "repositoryPath": "runtime/models/detector/best.pt",
       "imageSize": 640,
       "validationScope": [
         "species+camera_id holdout 검증",
@@ -57,9 +55,7 @@
       },
       "sizeBytes": 3186882,
       "sha256": "720efb30093c2fbaf8866243a60870c7816f3e141c81e0fac015a358edce1f92",
-      "sourceLocalPath": "artifacts/models/yolo11n_health_date_camera_holdout_v1/best.pt",
-      "runtimeRelativePath": "runtime/models/health/best.pt",
-      "dockerRuntimePath": "/models/health/best.pt",
+      "repositoryPath": "runtime/models/health/best.pt",
       "imageSize": 320,
       "validationScope": [
         "date+global camera holdout Validation 1000장 Top-1 accuracy 0.999",

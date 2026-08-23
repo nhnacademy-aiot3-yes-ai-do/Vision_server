@@ -1,170 +1,186 @@
 # Model Management
 
-## 기본 원칙
+## 결정된 방식
 
-두 승인 모델은 소스 코드와 별도로 배포합니다. `.pt` 파일은 Git에 커밋하지
-않고, Docker build 또는 Kubernetes 시작 전에 크기와 SHA-256을 검증합니다.
-모델을 Python으로 load하여 확인하는 방식은 준비 단계에서 사용하지 않습니다.
+Vision_server가 두 모델의 소유권과 실행 책임을 가집니다. 현재 모델은
+private Vision_server Git 저장소에서 코드와 함께 관리하고, Docker image에
+포함해 private GitHub Container Registry(GHCR)로 배포합니다.
 
-Git에서 추적하는 계약은 다음 두 파일입니다.
+```text
+private Git repository
+├─ runtime/models/detector/best.pt
+├─ runtime/models/health/best.pt
+└─ models/model-manifest.json
+        ↓ make verify-models
+size + SHA-256 검증
+        ↓
+Vision 코드와 두 모델을 하나의 Docker image로 build
+        ↓
+private GHCR package
+        ↓
+배포 환경이 승인된 image digest로 pull
+```
 
-- `models/model-manifest.json`
-- `scripts/prepare_runtime_models.py`
+MinIO는 사용자 이미지 저장에만 사용합니다. 모델용 bucket이나 credential을
+두지 않으며, Vision_server는 image에 포함된 모델만 사용합니다.
 
-manifest는 모델 binary의 위치가 아니라 승인된 정체성을 기록합니다. host의
-절대 source path, 사용자명, credential 및 임시 URL을 기록해서는 안 됩니다.
+## 저장 위치
+
+| 역할 | private Git | Container |
+| --- | --- | --- |
+| 품종 탐지 | `runtime/models/detector/best.pt` | `/opt/mushroom-vision/runtime/models/detector/best.pt` |
+| 건강 분류 | `runtime/models/health/best.pt` | `/opt/mushroom-vision/runtime/models/health/best.pt` |
+| 모델 계약 | `models/model-manifest.json` | 애플리케이션 내부 manifest 경로 |
+
+`best.pt`는 Git에서 직접 검토하는 배포 입력입니다.
+로컬 `artifacts`에서 복사하거나 동일 경로에 덮어쓰는 준비 단계가 없습니다.
+private 저장소를 clone한 개발자와 CI는 같은 모델 파일을 받습니다.
+
+모델 또는 Docker image를 public 저장소·public package·public release에
+게시하지 않습니다. AIHub 데이터 이용조건, 모델 재배포 조건과
+Ultralytics/PyTorch 관련 라이선스는 공개 범위를 바꾸기 전에 별도로
+확인해야 합니다.
 
 ## Manifest 계약
 
-각 모델 항목은 최소한 다음 정보를 가져야 합니다.
+`models/model-manifest.json`은 두 binary의 승인된 정체성과 predictor
+실행 상수를 기록하는 단일 기준입니다. predictor의 모델 경로·이름·크기·
+SHA-256·입력 크기·class mapping은 import 시 이 파일을 검증한 결과에서
+파생됩니다. 각 모델에는 최소한 다음 정보가 있어야 합니다.
 
-- 안정적인 model ID와 공개 model name
-- 역할: species detector 또는 health classifier
-- framework/task/architecture
-- source artifact의 논리적 상대 경로
-- runtime 대상 상대 경로
+- 역할과 안정적인 model name/version
+- repository 상대 경로
 - byte 크기와 전체 SHA-256
-- 입력 크기
-- 공개 class mapping과 실제 weight의 raw class mapping
-- 현재 검증 범위와 알려진 제한사항
+- framework, task와 입력 크기
+- 외부 class mapping과 실제 weight의 raw class mapping
+- 검증 범위와 알려진 제한
 
-현재 runtime 대상은 다음으로 고정합니다.
+Container의 절대 모델 경로는 manifest에 중복 저장하지 않고 `Dockerfile`의
+복사 위치와 `DETECTOR_MODEL_PATH`·`HEALTH_MODEL_PATH` 환경변수로
+고정합니다.
 
-| 역할 | Runtime staging | Container |
-| --- | --- | --- |
-| Species detector | `runtime/models/detector/best.pt` | `/models/detector/best.pt` |
-| Health classifier | `runtime/models/health/best.pt` | `/models/health/best.pt` |
+host 절대경로, 사용자명, credential, presigned URL과 임시 다운로드 주소는
+manifest에 넣지 않습니다. 모델 성능과 적용 한계는
+[MODEL_CARD.md](MODEL_CARD.md)에 요약합니다.
 
-manifest 값과 `scripts/predict_mushroom_health.py`의 승인된 size/SHA-256,
-모델 이름, class mapping 및 입력 크기는 테스트에서 항상 일치해야 합니다.
-health 모델의 공개 mapping인 `HEALTHY`/`DISEASE_SUSPECTED`와 weight 내부
-raw mapping인 `0_healthy`/`1_disease_suspected`를 서로 다른 필드로
-기록하고 각각의 순서를 검증합니다. 같은 정보를 수동으로 각각 수정한 채
-merge하지 않습니다.
+## 검증 지점
 
-## 로컬 준비 절차
-
-```mermaid
-flowchart LR
-    S[Out-of-band source bundle<br/>read-only] --> P[prepare_runtime_models.py]
-    J[model-manifest.json] --> P
-    P --> V{size + SHA-256<br/>match?}
-    V -->|no| X[Fail<br/>no partial runtime files]
-    V -->|yes| T[Temporary file]
-    T --> A[Atomic rename]
-    A --> R[runtime/models<br/>Git ignored]
-    R --> C[Docker build context]
-```
-
-권장 명령은 Make target을 사용합니다.
+### 개발자와 CI
 
 ```bash
-make prepare-models
-make check-models
+make verify-models
 ```
 
-준비 스크립트는 다음 안전 속성을 가져야 합니다.
+이 target은 `scripts/verify_runtime_models.py`를 통해 두 파일의 존재 여부,
+크기와 SHA-256을 manifest와 비교합니다. 검증은 파일을 복사·수정하지 않는
+read-only 작업입니다.
 
-1. source 파일을 read-only로 열고 수정하지 않음
-2. manifest의 절대경로와 `..` traversal을 거부함
-3. 선택된 두 파일만 chunk 단위로 읽음
-4. byte 크기와 SHA-256을 모두 검증함
-5. 임시 파일을 같은 destination filesystem에 만들고 원자적으로 rename함
-6. 두 source를 먼저 모두 검증하고 각 destination에 incomplete 파일을
-   활성화하지 않음
-7. 기존 파일이 동일하면 idempotent하게 종료함
-8. 기존 파일이 다르면 묵시적으로 덮어쓰지 않음
-9. 출력 메시지와 생성 파일에 source 절대경로를 기록하지 않음
+검증 실패 시 다음 행동을 하지 않습니다.
 
-`runtime/models/**/*.pt`는 생성물이며 Git에 포함하지 않습니다. 디렉터리
-용도를 설명하는 작은 README만 추적합니다. 준비 스크립트가 읽는 source
-모델도 manifest가 지정한 Git-ignored `artifacts/models/...` 위치에만 두며,
-Git-tracked 디렉터리나 Docker context에 원본 bundle 전체를 복사하지
-않습니다.
+- SHA 검증 비활성화
+- manifest의 hash만 임의 수정
+- 다른 `best.pt`를 같은 이름으로 덮어쓰기
+- Docker build 또는 배포 계속
 
-## 변경과 승인
+### Docker build
 
-모델 교체는 코드 PR과 같은 검토 수준으로 처리합니다.
+`make docker-build`는 모델 검증이 통과한 경우에만 실행되어야 합니다.
+Dockerfile은 두 model file의 repository 상대 경로를 container 안에서도
+유지하고, non-root 애플리케이션이 수정할 수 없게 read-only로 둡니다.
 
-1. 새 모델의 provenance, split, 클래스 및 평가 보고서를 검토합니다.
-2. 새 object를 기존 object와 다른 version key로 업로드합니다.
-3. manifest의 size/SHA/class 정보를 갱신합니다.
-4. manifest와 predictor 계약 일치 테스트를 실행합니다.
-5. synthetic 기본 테스트를 실행합니다.
-6. 명시적 승인 환경에서만 실제 registry load smoke test를 실행합니다.
-7. staging 승인을 받은 digest만 production으로 promotion합니다.
+### 애플리케이션 시작
 
-기존 runtime bundle이 새 승인본과 다를 때만 명시적으로 교체합니다.
+predictor import 시 manifest schema·역할·고정 repository 경로·필드 타입과
+class mapping을 먼저 검증합니다. FastAPI lifespan에서는 `ModelRegistry`가
+다시 SHA-256과 실제 weight의 class mapping을 검증하고 두 모델을 한 번
+로드합니다. 모든 검증이 끝나야
+`GET /health/ready`가 200을 반환합니다.
 
-```bash
-python scripts/prepare_runtime_models.py --overwrite
-python scripts/prepare_runtime_models.py --check-only
+즉, Git/CI의 사전 검증과 애플리케이션의 시작 검증은 서로 대체하지 않는 두
+안전장치입니다.
+
+## 모델 변경 절차
+
+모델 교체는 일반 코드 변경과 같은 PR 검토를 받습니다.
+
+1. 새 모델의 provenance, 학습·검증 split, class 순서, 성능과 제한을
+   확인합니다.
+2. 해당 역할의 `runtime/models/.../best.pt`를 새 파일로 교체합니다.
+3. `models/model-manifest.json`의 model version, size, SHA-256과 관련
+   정보를 함께 갱신합니다.
+4. predictor가 새 manifest 계약에서 상수를 정상 파생하는지 확인합니다.
+5. `make verify-models`와 `make test`를 실행합니다.
+6. 승인된 환경에서 실제 model registry/API smoke test를 실행합니다.
+7. PR 승인 후 새 Docker image를 build해 private GHCR에 push합니다.
+8. staging 검증을 통과한 image digest만 production에 배포합니다.
+
+모델 파일과 manifest는 하나의 commit/PR에서 함께 변경해야 합니다. 둘 중
+하나만 바뀐 commit은 배포하지 않습니다.
+
+## image version과 배포
+
+사람이 읽는 tag에는 코드와 model bundle 버전을 함께 표현할 수 있습니다.
+
+```text
+ghcr.io/<organization>/vision-server:0.1.0-model-v1
 ```
 
-동일 object key를 덮어쓰지 않습니다. rollback은 이전 manifest와 immutable
-object version을 다시 지정하는 방식으로 수행합니다.
+`latest`만으로 배포 대상을 지정하지 않습니다. 실제 Kubernetes 배포는
+변경 불가능한 digest를 사용합니다.
 
-## MinIO initContainer 계획
-
-클러스터에서는 model binary를 Git 또는 일반 application image layer에
-의존하지 않는 구성을 목표로 합니다.
-
-```mermaid
-sequenceDiagram
-    participant K as Kubelet
-    participant I as MinIO initContainer
-    participant O as MinIO
-    participant V as Shared model volume
-    participant A as Vision API
-
-    K->>I: Start initContainer
-    I->>O: Fetch versioned detector/classifier objects
-    O-->>I: Stream binary objects
-    I->>I: Verify manifest size and SHA-256
-    I->>V: Install via temporary file + atomic rename
-    I-->>K: Exit 0 only when both models are valid
-    K->>A: Start non-root API container
-    V-->>A: Mount /models read-only
-    A->>A: Registry verifies SHA and class mapping
+```text
+ghcr.io/<organization>/vision-server@sha256:<image-digest>
 ```
 
-구현 시 지켜야 할 사항:
+release마다 다음을 함께 기록합니다.
 
-- `TODO(MINIO_IMAGE)`: 승인 digest로 고정한 MinIO client/init image
-- `TODO(MINIO_ENDPOINT)`: cluster 내부 endpoint
-- `TODO(MINIO_BUCKET)`: 전용 bucket
-- `TODO(MINIO_OBJECT_KEYS)`: versioned detector/classifier object keys
-- credential은 Kubernetes Secret으로만 주입
-- manifest 또는 object metadata는 ConfigMap/immutable image에서 제공
-- initContainer의 model volume mount는 writable
-- application container의 같은 volume mount는 `readOnly: true`
-- 실패한 checksum은 Pod startup 실패로 처리
-- 로그에는 credential, presigned URL 및 local node path를 남기지 않음
-- NetworkPolicy로 initContainer의 MinIO 접근만 허용
+- Git commit SHA
+- detector와 health model version
+- detector와 health model SHA-256
+- 사람이 읽는 image tag
+- 실제 배포한 image digest
+- 테스트 결과와 승인자
 
-`TODO(NAMESPACE)`, Secret 이름, ServiceAccount 및 object retention 정책은
-플랫폼 팀과 확정하기 전 문서 예시에도 실제 값처럼 적지 않습니다.
+## rollback
 
-## Docker 프로토타입과 클러스터 차이
+실행 중인 Pod의 모델 파일을 바꾸지 않습니다. 문제가 생기면 이전에 검증된
+Docker image digest로 Deployment를 되돌립니다.
 
-`Dockerfile.template`은 로컬 handoff를 위해 검증된 `runtime/models`를
-read-only image layer로 복사합니다. Kubernetes 목표 구조에서는 `/models`
-volume mount가 image 경로를 대체합니다. 두 방식 모두 애플리케이션이 보는
-경로와 SHA 검증 계약은 같습니다.
+```text
+현재 digest에서 문제 확인
+→ 이전 승인 digest로 Deployment 변경
+→ 새 Pod readiness 확인
+→ 트래픽 전환
+```
 
-모델 라이선스와 AIHub 재배포 조건을 확인하기 전에는 Git LFS, public release,
-public image에 binary를 게시하지 않습니다.
+image가 코드와 두 모델을 모두 포함하므로 이전 digest 하나만 지정하면 같은
+코드·의존성·모델 조합을 재현할 수 있습니다.
 
-## 필수 테스트
+## 접근 권한과 Secret
 
-- 유효한 synthetic source 두 개의 atomic 준비
-- size mismatch와 SHA mismatch 거부
-- 부분 실패 시 runtime bundle 미활성화
-- 기존 동일 파일의 idempotency
-- 기존 불일치 파일의 무승인 overwrite 거부
-- manifest path traversal 및 symlink escape 거부
-- source size/mtime/hash 불변
-- manifest와 predictor 모델 계약 일치
-- 출력 및 manifest의 로컬 절대경로 비노출
-- 기본 pytest에서 실제 모델 미로드
-- `RUN_MODEL_INTEGRATION_TESTS=true`일 때만 실제 registry load 허용
+- Vision_server Git repository를 private으로 유지합니다.
+- GHCR package도 private으로 유지합니다.
+- CI push 권한과 Kubernetes pull 권한은 최소 범위로 분리합니다.
+- GHCR token이나 registry credential을 Git과 `.env.example`에 넣지
+  않습니다.
+- CI 로그와 artifact에 token, 로컬 경로와 모델 binary를 별도로 노출하지
+  않습니다.
+- 배포 환경에는 image pull secret 또는 승인된 workload identity만
+  제공합니다.
+
+Git history에는 과거 모델 binary도 남습니다. 모델 배포 권한이 없는
+사용자에게 저장소 read 권한을 주지 않습니다.
+
+## 향후 재검토 기준
+
+다음 상황이 오면 모델 전용 OCI artifact나 승인된 모델 registry 분리를
+재검토할 수 있습니다.
+
+- 모델 수·용량이 크게 증가함
+- 코드와 모델의 release 주기가 완전히 달라짐
+- 저장소 clone 비용이 팀 개발을 방해함
+- 모델별 접근 권한 또는 retention 정책이 필요함
+
+그전까지는 모델 두 개와 Vision 코드를 하나의 검증된 Docker image로
+배포하는 현재 방식이 기준입니다. 구조를 바꾸더라도 image digest, manifest
+무결성, private 접근 권한과 rollback 가능성은 유지해야 합니다.

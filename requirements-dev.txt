@@ -1,5 +1,4 @@
-# Install this after the platform runtime (requirements-macos.txt locally, or
-# requirements-runtime.txt in a team-approved Linux PyTorch environment).
-# Tests use the repository's direct ASGI client; httpx is intentionally absent.
+# GitHub hosted CI는 경량 requirements-common.txt와 함께 설치한다.
+# 실제 모델 검증 lane은 macOS/runtime 프로필에 이 개발 도구를 추가한다.
+# 테스트는 저장소의 직접 ASGI client를 사용하므로 httpx는 의도적으로 없다.
 pytest==9.1.1
-tqdm==4.69.1

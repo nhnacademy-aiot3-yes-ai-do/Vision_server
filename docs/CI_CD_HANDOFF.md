@@ -1,256 +1,257 @@
 # CI/CD Handoff
 
-## 현재 저장소 단서
-
-- organization ownership, 대상 branch, branch protection 및 reviewer 정책은
-  아직 이 저장소에 선언되어 있지 않습니다.
-- application, tests 및 일부 Markdown/JSON 보고서는 Git으로 추적합니다.
-- `.env`, `artifacts/`, dataset 디렉터리 및 `*.pt`는 Git에서 제외합니다.
-- Python packaging lock, CI workflow 및 배포 manifest는 아직 없습니다.
-- Docker 관련 파일은 prototype이며 production 배포 승인을 의미하지 않습니다.
-
-외부 sample image나 OS metadata 정리는 서비스 인프라 PR에 포함하지 않습니다.
-
 ## 배포 계약
 
-| 항목 | 값 또는 권장안 |
+| 항목 | 값 또는 원칙 |
 | --- | --- |
 | 서비스명 | `mushroom-vision-service` |
 | container port | `8000` |
 | Uvicorn workers | `1` |
-| Kubernetes Service | 내부 `ClusterIP` 권장 |
-| 내부 주소 예 | `http://mushroom-vision-service:8000` |
-| 분석 API | `POST /api/v1/mushroom/health-check` |
+| 분석 API | `POST /api/internal/mushrooms/health-check` |
 | liveness | `GET /health/live` |
 | readiness | `GET /health/ready` |
+| image registry | private GitHub Container Registry(GHCR) |
+| 배포 기준 | image tag가 아닌 immutable digest |
+| 모델 공급 | private Git의 두 `best.pt`를 image에 포함 |
 
-Spring AI-Service만 ClusterIP를 통해 호출하는 구성을 기본으로 검토합니다.
-외부 직접 공개, 인증, Ingress와 NetworkPolicy는 플랫폼·보안 팀 승인 전에는
-확정하지 않습니다.
+Spring AI-Server만 내부 Service를 통해 Vision_server를 호출하는 구성을
+기본으로 합니다. Vision endpoint를 외부에 직접 공개할지는 보안·플랫폼
+검토 후 결정합니다.
 
-## Dependency files
-
-- `requirements-common.txt`: OS와 accelerator에 독립적인 API·추론 direct
-  dependency
-- `requirements-macos.txt`: Apple Silicon host용 common dependency와
-  `torch==2.11.0`, `torchvision==0.26.0`
-- `requirements-runtime.txt`: Linux container용 common dependency include;
-  PyTorch와 torchvision은 승인된 base image가 제공
-- `requirements-dev.txt`: 선택한 platform runtime에 추가하는 pytest 등
-  개발·테스트 dependency
-
-Mac job은 `requirements-macos.txt`와 `requirements-dev.txt`를 함께
-사용합니다. CUDA local version suffix가 붙은 wheel 또는 CUDA package
-index를 macOS job에 설치하지 않습니다.
-
-Linux CPU와 Linux CUDA는 같은 dependency 이름을 사용하더라도 별도 배포
-profile입니다. `TODO(BASE_IMAGE)`와 `TODO(GPU)`가 결정되면 각 profile의
-base digest, CPU/CUDA runtime, 아키텍처, PyTorch/torchvision 버전을 한
-세트로 검증하고 release 증거에 남깁니다. `requirements-runtime.txt`만
-bare host에 설치해 완전한 추론 환경이 된다고 가정하지 않습니다.
-
-Mac profile은 현재 검증 환경과 같은 release pair인 PyTorch 2.11 /
-torchvision 0.26을 사용하되 CUDA suffix는 사용하지 않습니다. Linux
-base의 CUDA build suffix와 driver 조합은 별도 승인 대상입니다. Linux
-base가 이 release pair와 다른 버전을 쓰려면 같은 두 `best.pt`로 보호된
-registry/API integration을 다시 통과한 증거가 필요합니다.
-
-## 제안 브랜치와 PR 경계
-
-1. `dev`에서 짧은 infrastructure feature branch를 만듭니다.
-2. model manifest/prepare script, dependency files, Docker template, 문서와
-   테스트를 논리적인 작은 commit으로 나눕니다.
-3. 모델 binary, `.env`, dataset 및 generated artifact가 staged되지 않았는지
-   확인합니다.
-4. 최소 한 명의 reviewer와 CI 통과 후 `dev`로 merge합니다.
-5. release 후보만 별도 승인으로 `main`에 promotion합니다.
-
-`main`과 `dev`의 protection, required reviewers 및 merge 방식은
-`TODO(GIT_POLICY)`로 두고 팀 owner가 결정해야 합니다.
-
-## CI 파이프라인
+## 확정된 모델 배포 흐름
 
 ```mermaid
 flowchart LR
-    PR[Pull request] --> S[Secret/path scan]
-    S --> U[Unit tests<br/>fake models only]
-    U --> M[Manifest contract tests]
-    M --> D[Docker context policy]
-    D --> B[Template image build<br/>approved BASE_IMAGE]
-    B --> P{Protected promotion?}
-    P -->|no| E[Ephemeral artifact]
-    P -->|yes| R[TODO container registry]
-    R --> ST[Staging deployment]
-    ST --> A[Manual approval]
-    A --> PRD[Production deployment]
+    PR[Private Git PR<br/>code + models + manifest]
+    V[make verify-models]
+    T[Unit/API tests]
+    B[Docker build]
+    R[Private GHCR push]
+    S[Staging<br/>digest pin]
+    A[Approval]
+    P[Production<br/>same digest]
+
+    PR --> V --> T --> B --> R --> S --> A --> P
 ```
 
-### Pull request 필수 단계
+MinIO는 사용자 이미지 저장소이며 CI/CD 모델 공급 경로가 아닙니다.
+별도 모델 다운로드 단계 없이 코드, manifest와 두 모델을 하나의 image
+release로 취급합니다.
 
-- Python 3.12 syntax/import 검사
-- `pytest -q` 기본 suite
-- 실제 model load test가 skip 상태인지 확인
-- manifest JSON schema와 predictor 계약 일치
-- prepare script synthetic atomicity/immutability 테스트
-- `.dockerignore` allowlist에 `.env`, dataset, reports 및 임의 `.pt`가
-  포함되지 않는지 검사
-- Dockerfile이 worker 1, non-root, 고정 runtime 경로를 유지하는지 정적 검사
-- 문서와 manifest에 host 절대경로 및 credential이 없는지 검사
+## 저장소와 package 권한
 
-CI 기본 job은 실제 모델을 다운로드하거나 load하지 않습니다.
+- Vision_server repository와 GHCR package를 private으로 유지합니다.
+- GitHub Actions의 기본 권한은 read-only로 두고 image 게시 job에만
+  `packages: write`와 필요한 최소 `contents: read`를 부여합니다.
+- pull request job에는 package push 권한과 production 환경 secret을 주지
+  않습니다.
+- Kubernetes에는 private GHCR pull에 필요한 최소 권한만 부여합니다.
+- registry token, image pull secret과 GitHub credential을 repository
+  파일·`.env.example`·로그에 남기지 않습니다.
+- 모델 공개 가능 여부가 별도로 승인되기 전 repository/package visibility를
+  public으로 바꾸지 않습니다.
 
-### 플랫폼별 CI 역할
+organization, branch protection, reviewer 수와 environment approval 정책은
+CI/CD 팀이 저장소 정책으로 확정해야 합니다.
 
-| lane | dependency/runtime | 허용 검증 | 금지 또는 제한 |
-| --- | --- | --- | --- |
-| macOS arm64 | `requirements-macos.txt` + `requirements-dev.txt` | syntax, fake-model unit/API test, 경로·manifest 정적 검사 | CUDA wheel/index 설치 금지; 일반 shared runner에서 MPS와 실제 모델 성능을 보장하지 않음 |
-| Linux CPU | 승인된 CPU PyTorch/torchvision base + `requirements-runtime.txt` | unit/API test, CPU container startup 및 opt-in 모델 smoke | CUDA 동작을 검증했다고 해석하지 않음 |
-| Linux CUDA | 승인된 CUDA base + `requirements-runtime.txt` + NVIDIA runner | 보호된 실제 모델 integration, CUDA startup/inference smoke | 일반 PR과 credential 없는 runner에서 실행 금지 |
+## Pull request CI
 
-Apple Silicon MPS 실제 모델 검증이 필요하면 승인 모델을 제공할 수 있는 전용
-Mac runner에서만 보호된 opt-in job으로 실행합니다. 해당 job은
-`torch.backends.mps.is_available()`을 먼저 확인하고 실제 선택 device를
-로그에 남겨야 합니다. `make doctor-mac`의 path-safe 결과를 진단 증거로
-사용할 수 있습니다. MPS가 없는 일반 Mac CI에서 CPU로 자동 대체된 성공을
-MPS 검증 성공으로 기록하지 않습니다.
+일반 PR에서 최소한 다음 순서로 검증합니다.
 
-다음 항목은 CI owner가 확정해야 합니다.
+1. Python 3.12를 준비하고 torch 없는 `requirements-common.txt`와
+   `requirements-dev.txt` 설치
+2. `make verify-models`
+3. 남아 있는 전체 핵심 `pytest` 실행
+4. manifest와 predictor의 model name, size, SHA-256, class mapping 계약 확인
+5. Docker build context에 dataset, 외부 이미지, `.env`, cache와 Git
+   metadata가 들어가지 않는지 확인
+6. Dockerfile의 worker 1, non-root, 고정 model path와 SHA 검증 설정 확인
 
-- `TODO(MAC_RUNNER)`: Apple Silicon 전용 runner와 MPS 검증 필요 여부
-- `TODO(MAC_WHEEL_SOURCE)`: 승인된 macOS arm64 wheel source와 cache 정책
-- `TODO(LINUX_CPU_BASE)`: CPU base image digest와 대상 아키텍처
-- `TODO(LINUX_CUDA_BASE)`: CUDA base image digest, driver/runtime 호환표
-- `TODO(PLATFORM_LOCK)`: platform별 transitive lock 또는 hash 정책
-- `TODO(MODEL_CREDENTIAL)`: 보호된 integration job의 모델 공급 방식
+승인된 Linux base image를 사용하는 실제 image build는 이 PR gate를 통과해
+main에 반영된 뒤 publish job에서 수행합니다. 조직 정책상 PR 단계의 image
+build까지 필수라면, 승인 base에 접근할 수 있는 별도 protected runner check를
+추가합니다.
 
-### 보호된 통합 단계
+private repository checkout에 두 `best.pt`가 포함되므로 별도 모델
+다운로드 secret이나 네트워크 단계가 없어야 합니다. `make verify-models`는
+파일을 수정하지 않는 검증 단계입니다.
 
-다음 단계는 승인된 runner와 model credential이 있을 때만 실행합니다.
+기본 테스트는 실제 weight를 Ultralytics로 load하지 않고 fake model을
+사용하며, 두 binary는 manifest 검증 과정에서 크기와 SHA-256만 읽습니다.
+실제 model load smoke test는 모델과 필요한 accelerator를 제공하는 승인
+runner에서만 다음처럼 실행합니다.
 
-- MinIO에서 immutable version object 준비
-- SHA-256 검증과 runtime staging
-- `RUN_MODEL_INTEGRATION_TESTS=true` registry smoke test
-- image build 및 startup smoke test
-- `/health/live`, `/health/ready` probe와 synthetic API 요청
+```bash
+RUN_MODEL_INTEGRATION_TESTS=true \
+python -m pytest -q tests/test_model_registry.py -k integration
+```
 
-credential은 masked CI secret 또는 workload identity로만 제공합니다. shell
-trace와 artifact에 secret 값, source URL 및 presigned URL을 남기지 않습니다.
+## 플랫폼별 검증
+
+| lane | runtime | 검증 범위 |
+| --- | --- | --- |
+| GitHub hosted PR | `requirements-common.txt` + `requirements-dev.txt` | torch 없는 전체 fake-model/API/manifest gate |
+| macOS arm64 | `requirements-macos.txt` + `requirements-dev.txt` | fake-model 테스트, 모델 manifest 검증, 선택적 CPU/MPS smoke |
+| Linux CPU | 승인된 CPU PyTorch base + `requirements-runtime.txt` | image startup, model load, API smoke |
+| Linux CUDA | 승인된 CUDA base + `requirements-runtime.txt` | NVIDIA runner에서 CUDA startup/inference |
+
+Linux CPU와 CUDA image는 별도 base digest와 테스트 증거를 갖는 별도
+profile입니다. CUDA image를 일반 runner에서 build한 사실만으로 GPU 추론을
+검증했다고 기록하지 않습니다.
+
+확정이 필요한 값:
+
+- `TODO(LINUX_CPU_BASE)`: Python/PyTorch CPU base image digest
+- `TODO(LINUX_CUDA_BASE)`: CUDA base image digest와 driver 호환 범위
+- `TODO(TARGET_PROFILE)`: 최초 배포가 CPU인지 CUDA인지
+- `TODO(GHCR_NAME)`: `ghcr.io/<organization>/<package>`
+- `TODO(GIT_POLICY)`: 보호 branch, reviewer와 merge 정책
+- `TODO(RUNNERS)`: 실제 model CPU/CUDA/MPS 검증 runner
 
 ## Docker build 계약
 
-`Dockerfile.template`은 `ARG BASE_IMAGE`에 기본값을 두지 않습니다.
-
-- `TODO(BASE_IMAGE)`: Python 3.12와 승인된 PyTorch/torchvision 조합을
-  제공하는 Linux CPU 또는 CUDA digest
-- `TODO(GPU)`: target이 CPU인지 GPU인지와 CUDA/driver/runtime compatibility
-- `TODO(REGISTRY)`: image registry, repository 및 retention
-- `TODO(NVIDIA_DEVICE_PLUGIN)`: GPU 사용 시 cluster 설치·버전·node label 확인
-
-Java Spring 서비스 Dockerfile은 repository layout, image naming 및 CI stage
-구성을 참고할 수 있습니다. 그러나 Vision 서비스의 Python/PyTorch
-`BASE_IMAGE`는 Java base image에서 유추하지 않고 별도로 승인해야 합니다.
-Java image tag, JVM 옵션 또는 Java 사용자 구성을 Vision template에 복사하지
-않습니다.
-
-CPU와 CUDA 이미지는 동일한 임의 base tag를 공유하는 하나의 profile로
-취급하지 않습니다. 각각 immutable digest와 테스트 증거를 갖는 별도
-profile로 build·tag·promotion합니다. base가 제공하는
-PyTorch/torchvision 버전은 애플리케이션 계약과 일치해야 하며
-`requirements-runtime.txt`가 accelerator wheel을 다시 설치하지 않습니다.
-
-Docker Desktop for Mac은 Linux VM 기반이므로 Apple Metal/MPS를 이
-container에 전달하지 않습니다. Mac host의 MPS 검증은
-`Dockerfile.template`이 아니라 host virtual environment에서 수행합니다.
-Mac에서 Linux image를 cross-build했다는 사실은 Linux CUDA startup 또는
-GPU inference 검증 증거가 아닙니다. CUDA image는 대상 Linux/NVIDIA
-runner에서 build하고 검증합니다.
-
-예상 build 진입점은 Make target입니다.
+`Dockerfile`은 `BASE_IMAGE`를 명시적으로 받습니다. 승인된 base는
+Python 3.12와 서로 호환되는 PyTorch/torchvision을 제공해야 합니다.
+`requirements-runtime.txt`가 accelerator용 PyTorch를 임의로 교체하면 안
+됩니다. pull request의 hosted test job은 Ultralytics/PyTorch를 설치하지
+않고 전체 핵심 테스트를 통과시킵니다. GHCR publish job은 이 test job이
+성공한 push 또는 수동 실행에서만 `packages: write` 권한을 받습니다.
 
 ```bash
-make prepare-models
-make check-models
-make docker-build BASE_IMAGE=<team-approved-image-or-digest>
+make verify-models
+make docker-build \
+  BASE_IMAGE=<approved-python-pytorch-image-or-digest> \
+  IMAGE_NAME=ghcr.io/<organization>/vision-server:<tag>
 ```
 
-build 전에 다음 두 파일이 존재하고 manifest의 크기·SHA-256과 일치해야
-합니다.
+image에 포함하는 저장소 파일은 최소화합니다.
 
+- `app/`
+- `scripts/predict_mushroom_health.py`
+- `scripts/verify_runtime_models.py`
+- `models/model-manifest.json`
 - `runtime/models/detector/best.pt`
 - `runtime/models/health/best.pt`
+- runtime requirements
 
-template은 검증된 두 runtime model만 image layer에 넣으며 non-root API가
-수정할 수 없게 root 소유 read-only로 둡니다. 운영에서는 image도
-read-only root filesystem으로 실행하고 `/tmp`만 제한된 tmpfs로 제공합니다.
+학습·평가 자료, reports, tests, `.git`, `.env`, 외부 이미지와 사용자
+업로드를 image에 포함하지 않습니다.
 
-## Kubernetes/MinIO handoff
+Container runtime 계약:
 
-```mermaid
-flowchart TB
-    CI[Protected CI] -->|push immutable digest| REG[TODO registry]
-    CD[Deployment controller] --> K8S[TODO namespace]
-    REG --> K8S
-    MINIO[(MinIO)] --> INIT[InitContainer]
-    SEC[Secret/workload identity] --> INIT
-    MAN[Manifest ConfigMap] --> INIT
-    INIT --> VOL[(Model volume)]
-    VOL -->|read-only| APP[Vision API<br/>worker 1, non-root]
+- numeric non-root user
+- read-only root filesystem
+- image에 포함된 `runtime/models` 경로는 애플리케이션이 수정할 수 없음
+- 제한된 writable `/tmp`
+- `HEALTH_VERIFY_MODEL_SHA256=true`
+- Uvicorn worker 1
+
+## GHCR 게시와 tag
+
+사람이 읽는 release tag에는 서비스와 모델 bundle 버전을 함께 남깁니다.
+
+```text
+ghcr.io/<organization>/vision-server:0.1.0-model-v1
 ```
 
-플랫폼 팀 handoff 항목:
+같은 build에 Git commit tag를 추가할 수 있지만 `latest`만으로 promotion
+또는 rollback하지 않습니다. CI가 image를 push한 뒤 registry가 반환한
+digest를 release evidence로 저장합니다.
 
-- `TODO(NAMESPACE)`: namespace와 quota
-- `TODO(SERVICE_ACCOUNT)`: workload identity
-- `TODO(MINIO_*)`: endpoint, bucket, versioned keys, credential source
-- `TODO(RESOURCES)`: CPU, memory, ephemeral storage 및 GPU request/limit
-- `TODO(INGRESS)`: authentication, body limit, timeout 및 rate limit
-- `TODO(OBSERVABILITY)`: metrics, structured logs, tracing 및 alert
-- `TODO(ROLLBACK)`: image digest와 model object version을 함께 rollback하는
-  절차
+권장 promotion:
 
-Pod security 기준:
+```text
+PR 검증
+→ protected branch/release에서 image 1회 build
+→ private GHCR push
+→ 그 digest를 staging에 배포
+→ smoke와 승인
+→ 같은 digest를 production에 배포
+```
+
+staging과 production 사이에서 image를 다시 build하지 않습니다.
+
+## Kubernetes handoff
+
+```mermaid
+flowchart LR
+    G[Private GHCR<br/>immutable digest]
+    D[Kubernetes Deployment]
+    P[Vision Pod<br/>worker 1]
+    S[ClusterIP Service]
+    A[Spring AI-Server]
+
+    G -->|authenticated pull| D --> P --> S
+    A -->|multipart image| S
+```
+
+Deployment image는 다음 형태로 고정합니다.
+
+```text
+ghcr.io/<organization>/vision-server@sha256:<image-digest>
+```
+
+필수 운영 설정:
+
+- `DETECTOR_MODEL_PATH=/opt/mushroom-vision/runtime/models/detector/best.pt`
+- `HEALTH_MODEL_PATH=/opt/mushroom-vision/runtime/models/health/best.pt`
+- `HEALTH_VERIFY_MODEL_SHA256=true`
+- `HEALTH_DEVICE=cpu` 또는 승인된 `cuda:0`
+- liveness `/health/live`
+- readiness `/health/ready`
+- replica별 Uvicorn worker 1
+
+Pod security 권장값:
 
 - `runAsNonRoot: true`
 - `allowPrivilegeEscalation: false`
-- root filesystem read-only
+- `readOnlyRootFilesystem: true`
 - Linux capabilities 모두 drop
 - `seccompProfile: RuntimeDefault`
-- application model volume `readOnly: true`
-- worker 1
-- writable 경로는 크기 제한된 `/tmp`만 허용
+- 크기 제한된 `/tmp`만 writable
 
-initContainer가 두 checksum을 모두 검증하기 전에는 application container를
-시작하지 않습니다.
+플랫폼 팀이 정할 값:
 
-## Environment와 Secret
+- `TODO(NAMESPACE)`: namespace와 quota
+- `TODO(SERVICE_ACCOUNT)`: GHCR pull identity
+- `TODO(RESOURCES)`: CPU, memory, ephemeral storage와 GPU
+- `TODO(NETWORK_POLICY)`: AI-Server에서 Vision Service로의 접근
+- `TODO(TIMEOUT)`: Vision 최대 처리시간을 반영한 ingress/client timeout
+- `TODO(OBSERVABILITY)`: logs, metrics, tracing과 alert
 
-`.env.example`에는 공개 가능한 기본 설정과 변수 이름만 둡니다. 실제 `.env`,
-MinIO credential 및 registry credential은 Git에 넣지 않습니다.
+## 배포 smoke test
 
-배포 환경은 최소한 다음을 명시합니다.
+새 Pod가 뜬 뒤 순서대로 확인합니다.
 
-- `DETECTOR_MODEL_PATH=/models/detector/best.pt`
-- `HEALTH_MODEL_PATH=/models/health/best.pt`
-- `HEALTH_DETECTION_CONFIDENCE`
-- `HEALTH_MIN_DETECTION_CONFIDENCE`
-- `HEALTH_UNCERTAIN_THRESHOLD`
-- `HEALTH_PADDING_RATIO`
-- `HEALTH_MAX_UPLOAD_BYTES`
-- `HEALTH_VERIFY_MODEL_SHA256=true`
-- `HEALTH_DEVICE`
+```bash
+curl --fail http://<vision-service>:8000/health/live
+curl --fail http://<vision-service>:8000/health/ready
 
-production에서 SHA 검증을 끄지 않습니다.
+curl --fail-with-body \
+  --form "image=@approved-smoke-image.jpg" \
+  http://<vision-service>:8000/api/internal/mushrooms/health-check
+```
 
-## Release 증거
+확인 항목:
+
+- readiness가 두 모델 load 후에만 200인지
+- API가 camelCase 계약을 반환하는지
+- 시작 로그에 model name과 실제 device가 맞는지
+- 로그와 응답에 credential, host 경로와 stack trace가 없는지
+- Spring AI-Server의 OpenFeign timeout과 오류 처리가 동작하는지
+
+## release evidence와 rollback
 
 release마다 다음을 보존합니다.
 
 - Git commit SHA
-- container image digest
-- model manifest version과 두 model SHA-256
-- dependency lock 또는 approved base digest
-- unit/integration test 결과
-- API contract version
-- 승인자와 rollback 대상
+- detector·health model version과 두 model SHA-256
+- base image digest와 dependency 정보
+- Vision image tag와 최종 image digest
+- unit/integration/smoke test 결과
+- 배포 환경, 승인자와 배포 시각
+- 직전 정상 image digest
 
-이 정보에는 host 절대경로나 secret을 포함하지 않습니다.
+rollback은 모델 object를 따로 되돌리는 작업이 아닙니다. Deployment의
+image를 직전 정상 digest로 바꾸고 새 Pod의 readiness를 확인하면 코드와
+모델이 함께 되돌아갑니다.

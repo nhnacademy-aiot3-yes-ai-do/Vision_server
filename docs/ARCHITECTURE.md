@@ -1,151 +1,196 @@
 # Mushroom Vision Architecture
 
-## 목적과 범위
+## 서비스 경계
 
-Mushroom Vision v1은 한 장의 이미지를 받아 버섯 품종을 탐지하고, 품종별
-union crop을 이용해 건강 상태를 참고 정보로 반환하는 단일 FastAPI
-서비스입니다.
-
-지원하는 출력은 다음으로 제한됩니다.
-
-- 5품종 탐지, bbox, 개수, 탐지 confidence
-- `HEALTHY`, `DISEASE_SUSPECTED`, `UNCERTAIN`
-- 품종별 건강 confidence와 두 클래스 확률
-
-수확 적기, 생육 단계, 예상 수확일, 실제 크기, 해충 및 병반 위치는 지원하지
-않습니다. 건강 결과도 확정 진단이 아닙니다.
-
-## 런타임 구성
+Mushroom Vision v1은 한 장의 이미지에서 버섯 품종과 품종별 건강 상태
+후보를 계산하는 내부 FastAPI 서비스입니다.
 
 ```mermaid
 flowchart LR
-    C[Client] -->|multipart image| API[FastAPI worker<br/>exactly 1]
-    API --> V[Upload validation<br/>bytes, MIME, format, pixels]
-    V --> D[YOLO11n species detector]
-    D --> G[Group by species<br/>union bbox + 15% padding]
-    G --> Q{minimum detection<br/>confidence >= gate?}
-    Q -->|no| U[UNCERTAIN<br/>probabilities null]
-    Q -->|yes| H[YOLO11n-cls health classifier]
-    H --> R[HEALTHY / DISEASE_SUSPECTED<br/>or confidence UNCERTAIN]
-    U --> JSON[Camel-case JSON]
-    R --> JSON
+    M[(MinIO<br/>사용자 이미지)]
+    S[Spring AI-Server<br/>조회·요약·가공]
+    V[Vision_server<br/>이미지 분석]
+    U[최종 사용자 응답]
+
+    M -->|image bytes| S
+    S -->|OpenFeign multipart image| V
+    V -->|동기 JSON 응답| S
+    S -->|센서·RAG와 결합| U
 ```
 
-모델은 애플리케이션 lifespan에서 한 번 로드됩니다. `ModelRegistry`는 다음을
-확인한 뒤에만 `READY`가 됩니다.
+책임은 명확히 분리합니다.
 
-1. detector와 health classifier 파일이 모두 존재함
-2. 승인된 SHA-256과 일치함
-3. detector 5개 클래스와 classifier 2개 클래스 순서가 일치함
-4. 로드 전후 파일 fingerprint가 변하지 않음
+| 구성요소 | 책임 |
+| --- | --- |
+| MinIO | 사용자가 업로드한 이미지 저장 |
+| Spring AI-Server | MinIO 조회, multipart 요청, Vision 결과와 다른 정보의 요약·가공 |
+| Vision_server | 업로드 검증, 두 모델 추론, 구조화된 결과 반환 |
+| private Git/GHCR | Vision 코드·모델의 버전 관리와 배포 |
 
-로드가 실패하면 lifespan 시작도 실패하므로 요청을 받는 불완전한 서버가
-남지 않습니다. worker를 늘리면 worker마다 모델과 GPU 메모리가 복제되므로
-항상 worker 1개를 사용합니다.
+Vision_server는 MinIO endpoint, bucket, object key 또는 credential을 알지
+않습니다. 반대로 AI-Server는 `.pt` 파일과 Python 추론 구현을 관리하지
+않습니다.
 
-`GET /health/live`는 프로세스 liveness만, `GET /health/ready`는 registry의
-`READY` 상태만 확인합니다. 두 probe 모두 모델 load나 추론을 새로
-실행하지 않습니다.
+## 요청이 자동 실행되는 구조
 
-## 요청 처리 순서
+FastAPI가 다음 route를 등록한 상태로 Uvicorn이 요청을 기다립니다.
 
-1. 파일 확장자와 MIME 조합을 검증합니다.
-2. 설정된 byte 상한보다 한 byte만 더 읽어 초과를 판정합니다.
-3. Pillow로 실제 형식, 단일 frame, 픽셀 상한, 손상 및 압축폭탄을
-   검증합니다.
-4. EXIF 방향을 반영하고 RGB로 변환합니다.
-5. detector가 품종별 bbox를 반환합니다.
-6. 같은 품종의 모든 유효 bbox를 union하고 이미지 크기 기준 padding을
-   적용합니다.
-7. 품종 그룹의 `detectionConfidenceMin`이
-   `HEALTH_MIN_DETECTION_CONFIDENCE`보다 낮으면 classifier를 호출하지
-   않습니다. 이 경우 상태는 `UNCERTAIN`, 건강 confidence와 확률은
-   `null`입니다.
-8. gate를 통과한 품종만 classifier를 한 번 호출합니다.
+```text
+POST /api/internal/mushrooms/health-check
+```
 
-여러 품종은 서로 독립적으로 gate와 분류를 적용합니다. 탐지 결과가 하나라도
-있으면 낮은 confidence gate 때문에 `NO_MUSHROOM_DETECTED`로 바꾸지 않습니다.
+OpenFeign이 이 URL로 multipart `image`를 보내면 FastAPI가 route를 찾아
+업로드 객체와 서비스 의존성을 전달합니다. route가
+`MushroomHealthService`를 호출하고, 서비스가 predictor를 호출하므로
+요청 자체가 전체 분석 흐름의 시작 신호가 됩니다.
 
 ```mermaid
 sequenceDiagram
-    participant S as Spring AI-Service
+    participant S as Spring AI-Server
     participant A as FastAPI route
     participant V as MushroomHealthService
     participant D as Species detector
     participant H as Health classifier
 
-    S->>A: POST multipart image
-    A->>V: validate and analyze upload
-    V->>V: decode, EXIF transpose, RGB
+    S->>A: POST multipart(image)
+    A->>V: analyze upload
+    V->>V: validate, decode, EXIF, RGB
     V->>D: source image
-    D-->>V: class, bbox, confidence
-    V->>V: group by species and build union crop
-    alt detectionConfidenceMin below gate
-        V-->>A: UNCERTAIN and null probabilities
-    else gate passed
+    D-->>V: species, bbox, confidence
+    V->>V: group by species, union crop
+    alt 탐지 confidence 안전 기준 미달
+        V-->>A: UNCERTAIN, probabilities null
+    else 안전 기준 통과
         V->>H: padded union crop
-        H-->>V: HEALTHY / DISEASE_SUSPECTED probabilities
-        V-->>A: species health result
+        H-->>V: health probabilities
+        V-->>A: health result
     end
-    A-->>S: camelCase JSON
+    A-->>S: HTTP JSON response
+    S->>S: DTO를 요약·가공
 ```
 
-## 동시성 경계
+route는 분석 도중 HTTP 응답을 먼저 보내지 않습니다. Vision_server가
+분석 JSON을 반환할 때까지 OpenFeign 호출은 대기합니다. 따라서 OpenFeign
+메서드가 반환되는 시점이 분석 완료 시점입니다.
 
-이미지 decode와 모델 추론은 전용 thread executor에서 실행됩니다. 하나의
-비동기 inference lock이 detector부터 classifier까지 전체 구간을
-직렬화합니다. 따라서 같은 프로세스의 모델 객체를 두 요청이 동시에 사용하지
-않습니다.
+## Vision_server 내부 구조
 
-이 lock은 모델 안전성을 위한 것이며 외부 트래픽 제한을 대신하지 않습니다.
-배포 계층에서 request body, rate, queue 및 동시 요청 상한을 별도로 정해야
-합니다.
+```text
+app/main.py
+  └─ lifespan
+      └─ ModelRegistry.load()
+          ├─ detector 파일·SHA·class mapping 검증 및 로드
+          └─ health classifier 파일·SHA·class mapping 검증 및 로드
 
-## 모델 파일 경계
+app/api/health.py
+  └─ MushroomHealthService
+      ├─ 업로드 형식·크기·pixel 검증
+      └─ scripts/predict_mushroom_health.py
+          ├─ 품종 탐지
+          ├─ 품종별 union crop
+          └─ 건강 분류와 confidence 규칙
+```
 
-저장소에는 모델 binary를 커밋하지 않습니다. Git에는
-`models/model-manifest.json`만 두고, 팀원이
-`scripts/prepare_runtime_models.py`로 검증된 runtime 사본을 준비합니다.
+각 계층의 책임은 다음과 같습니다.
 
-프로토타입 Docker build는 다음 두 파일만 받습니다.
+| 코드 | 책임 |
+| --- | --- |
+| `app/main.py` | 앱 생성, router 등록, 시작·종료 생명주기 |
+| `app/api/health.py` | HTTP 입력·출력과 안전한 오류 변환 |
+| `app/services/mushroom_health_service.py` | 이미지 검증과 추론 orchestration |
+| `scripts/predict_mushroom_health.py` | 모델별 실제 추론 알고리즘 |
+| `app/core/model_registry.py` | 프로세스당 모델 한 쌍 관리 |
+| `app/core/config.py` | 환경변수 파싱과 범위 검증 |
+| `app/schemas/*.py` | camelCase 외부 계약 |
 
-- `runtime/models/detector/best.pt`
-- `runtime/models/health/best.pt`
+route에 YOLO 로직을 다시 작성하지 않고 service와 predictor를 재사용합니다.
 
-컨테이너에서는 root 소유 read-only 파일이며, API는 non-root로 실행됩니다.
-클러스터에서는 이미지에 의존하지 않고 MinIO initContainer가 같은 `/models`
-계약의 공유 볼륨을 준비하는 방식을 목표로 합니다.
+## 모델 생명주기와 readiness
 
-## 배포 토폴로지
+두 모델은 private Git의 다음 경로에서 코드와 함께 관리합니다.
+
+```text
+runtime/models/detector/best.pt
+runtime/models/health/best.pt
+```
+
+개발·CI build 전에 `make verify-models`가 두 파일을
+`models/model-manifest.json`의 크기와 SHA-256에 대조합니다. 컨테이너
+시작 시에는 `ModelRegistry`가 다시 다음 조건을 확인합니다.
+
+1. 두 파일이 모두 존재함
+2. 승인된 SHA-256과 일치함
+3. detector 5개와 classifier 2개 클래스 순서가 일치함
+4. 로드 전후 파일 fingerprint가 변하지 않음
+
+모두 성공한 뒤에만 registry가 `READY`가 됩니다. 모델은 요청마다 로드하지
+않고 애플리케이션 시작 시 한 번만 메모리에 올립니다.
+
+- `GET /health/live`: FastAPI process liveness
+- `GET /health/ready`: 현재 registry가 `READY`인지 확인
+
+두 probe는 모델을 새로 로드하거나 추론하지 않습니다.
+
+## 이미지 분석 흐름
 
 ```mermaid
-flowchart TB
-    subgraph Pod["Kubernetes Pod (planned)"]
-        I[MinIO initContainer<br/>download + SHA-256 verify]
-        M[(ephemeral model volume)]
-        A[Vision API container<br/>non-root, worker 1]
-        T[(tmpfs /tmp)]
-        I -->|atomic install| M
-        M -->|read-only mount| A
-        T --> A
-    end
-    O[(MinIO model objects)] --> I
-    S[Kubernetes Secret<br/>credentials] --> I
-    CM[ConfigMap<br/>object keys + manifest] --> I
-    C[Client] --> A
+flowchart LR
+    I[Multipart image]
+    V[형식·MIME·byte·pixel 검증]
+    D[품종 detector]
+    G[품종별 grouping<br/>union bbox + padding]
+    Q{minimum detection<br/>confidence 통과?}
+    U[UNCERTAIN<br/>확률 null]
+    H[건강 classifier]
+    R[HEALTHY / DISEASE_SUSPECTED<br/>또는 UNCERTAIN]
+    J[camelCase JSON]
+
+    I --> V --> D --> G --> Q
+    Q -->|아니오| U --> J
+    Q -->|예| H --> R --> J
 ```
 
-다음 항목은 팀 플랫폼 결정 전까지 확정하지 않습니다.
+같은 품종 객체가 여러 개면 해당 품종의 bbox를 모두 합친 crop을 한 번
+분류합니다. 서로 다른 품종은 각각 독립 결과로 반환합니다.
 
-- `TODO(BASE_IMAGE)`: Python/PyTorch base image와 digest
-- `TODO(GPU)`: CPU 또는 GPU node, CUDA 및 device 설정
-- `TODO(REGISTRY)`: container registry와 image promotion 규칙
-- `TODO(NAMESPACE)`: Kubernetes namespace와 Service/Ingress 이름
+## 동시성과 worker 계약
 
-## 신뢰 경계와 제한
+이미지 decode와 모델 추론은 event loop 밖의 thread executor에서
+실행됩니다. 하나의 비동기 inference lock이 detector부터 classifier까지를
+직렬화하여 같은 프로세스의 모델 객체를 두 요청이 동시에 사용하지 않게
+합니다.
 
-- 업로드 원본은 애플리케이션 파일로 저장하지 않습니다.
-- 외부 JSON에는 host 경로, 모델 경로 및 stack trace를 넣지 않습니다.
-- 모델 binary와 MinIO credential은 Git에 넣지 않습니다.
-- 현재 성능은 AIHub 내부 촬영 조건에서 검증한 결과입니다.
-- 외부 스마트폰 이미지와 버섯이 없는 배경 평가는 별도로 수행해야 합니다.
+모델은 process-local singleton이므로 Uvicorn worker마다 두 모델과 GPU
+메모리가 복제됩니다. 현재 배포 계약은 반드시 worker 1개입니다. 처리량이
+부족하면 먼저 latency·메모리를 측정하고 Pod 수와 요청 queue를 설계해야
+합니다.
+
+## 모델 배포 구조
+
+```mermaid
+flowchart LR
+    G[Private Git<br/>code + two best.pt]
+    V[Manifest verification]
+    B[Docker build]
+    R[Private GHCR]
+    K[Kubernetes<br/>digest-pinned image]
+    A[Vision API<br/>worker 1]
+
+    G --> V --> B --> R --> K --> A
+```
+
+Docker image는 코드, predictor, manifest와 두 모델을 함께 포함합니다.
+런타임에는 image에 포함된 모델만 사용합니다. 모델 변경은 새 Git commit,
+검증, 새 image와 새 digest 배포로 처리합니다.
+
+이 방식의 상세 규칙은 [모델 관리](MODEL_MANAGEMENT.md), 배포 설정은
+[CI/CD 인계](CI_CD_HANDOFF.md)를 확인하세요.
+
+## 신뢰 경계
+
+- 업로드 원본을 Vision_server의 파일로 저장하지 않습니다.
+- 응답에 stack trace, host 경로와 모델 경로를 노출하지 않습니다.
+- private 저장소와 private GHCR에만 모델을 둡니다.
+- registry credential은 CI/CD와 Kubernetes Secret에만 둡니다.
+- 모델 파일은 실행 중 교체하지 않습니다.
+- 건강 결과를 확정 진단으로 표현하지 않습니다.

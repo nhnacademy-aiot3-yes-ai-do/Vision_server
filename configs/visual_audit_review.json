@@ -1,7 +1,0 @@
-{
-  "bbox_semantics": "배양은 주로 병·봉지·배지 전체를, 생육·병해는 주로 버섯 개체 또는 군집을 표시한다.",
-  "segmentation_semantics": "양송이 생육 샘플에서 개별 버섯과 유묘의 실루엣을 표시하며 시각적으로 대체로 잘 정렬된다.",
-  "major_findings": "명백히 무관한 위치의 bbox는 제한 샘플에서 확인되지 않았지만, 양송이의 개체 단위와 다른 품종의 군집 단위, 표고 생육의 배지 상단 bbox가 혼재해 annotation 의미와 입도가 일관되지 않다.",
-  "coordinate_findings": "0 이하 bbox 8개는 width=0, height=0인 점 annotation이었다. 범위 밖 bbox 9개는 주로 화면 경계를 조금 넘는 컨테이너·군집 상자였다. 표본의 범위 밖 segmentation은 화면 경계에서 잘린 양송이 개체였다.",
-  "review_needed": "0 이하 bbox와 범위 밖 bbox의 대표 사례, 경계에서 잘린 segmentation, 버섯이 보이지 않는 생육 bbox는 최종 변환 전 별도 제외·클리핑 정책을 확정해야 한다."
-}

@@ -7,6 +7,13 @@ padding, and the health classifier returns HEALTHY, DISEASE_SUSPECTED, or
 UNCERTAIN.  No path from the local machine is included in the JSON response.
 """
 
+# 목적: 단일 이미지에서 버섯 품종을 탐지하고 품종별 union crop의 건강 상태를
+#       HEALTHY/DISEASE_SUSPECTED/UNCERTAIN 중 하나로 반환한다.
+# 입력: 이미지 파일, 승인된 detector·health best.pt, detection/health/padding 설정.
+# 출력: 경로 비식별 JSON 응답과 선택적 annotation JPEG/JSON 파일.
+# 처리 흐름: 입력·모델 fingerprint 확인 -> 품종 탐지 -> 품종별 bbox 통합/padding crop
+#            -> 건강 확률·threshold 판정 -> 응답 검증 -> 선택 출력 원자적 저장.
+
 from __future__ import annotations
 
 import argparse
@@ -27,32 +34,49 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts import verify_runtime_models as model_contract
+
+
 ARTIFACTS_ROOT = PROJECT_ROOT / "artifacts"
+MODEL_MANIFEST_PATH = PROJECT_ROOT / "models" / "model-manifest.json"
+
+
+def _load_approved_model_specs(
+    manifest_path: Path = MODEL_MANIFEST_PATH,
+) -> dict[str, model_contract.ModelSpec]:
+    # import 단계에서는 모델 binary를 읽지 않고 manifest 계약만 fail-closed로 검증한다.
+    try:
+        specs = model_contract.load_manifest(manifest_path)
+    except model_contract.ModelVerificationError as exc:
+        raise RuntimeError(f"승인 모델 manifest 계약 오류: {exc}") from exc
+    return {spec.role: spec for spec in specs}
+
+
+_MODEL_SPECS = _load_approved_model_specs()
+_DETECTOR_SPEC = _MODEL_SPECS["detector"]
+_HEALTH_SPEC = _MODEL_SPECS["health"]
+
+# 기존 앱·테스트가 사용하는 public constants API는 유지하되 모든 값은 manifest에서 파생한다.
 DETECTOR_MODEL_PATH = (
-    ARTIFACTS_ROOT / "models" / "yolo11n_camera_holdout_v1" / "best.pt"
+    PROJECT_ROOT / _DETECTOR_SPEC.repository_relative_path
 )
-HEALTH_MODEL_PATH = (
-    ARTIFACTS_ROOT
-    / "models"
-    / "yolo11n_health_date_camera_holdout_v1"
-    / "best.pt"
-)
-DETECTOR_MODEL_NAME = "mushroom-yolo11n-camera-holdout-v1"
-HEALTH_MODEL_NAME = "mushroom-health-yolo11n-date-camera-holdout-v1"
-DETECTOR_MODEL_SHA256 = (
-    "8d17eb493f2eeccccd832c56da2f346dfc730e5605c460016386c6bd0be10d32"
-)
-HEALTH_MODEL_SHA256 = (
-    "720efb30093c2fbaf8866243a60870c7816f3e141c81e0fac015a358edce1f92"
-)
-DETECTOR_MODEL_SIZE_BYTES = 5_447_706
-HEALTH_MODEL_SIZE_BYTES = 3_186_882
+HEALTH_MODEL_PATH = PROJECT_ROOT / _HEALTH_SPEC.repository_relative_path
+RUNTIME_MODELS_ROOT = DETECTOR_MODEL_PATH.parents[1]
+DETECTOR_MODEL_NAME = _DETECTOR_SPEC.name
+HEALTH_MODEL_NAME = _HEALTH_SPEC.name
+DETECTOR_MODEL_SHA256 = _DETECTOR_SPEC.sha256
+HEALTH_MODEL_SHA256 = _HEALTH_SPEC.sha256
+DETECTOR_MODEL_SIZE_BYTES = _DETECTOR_SPEC.size_bytes
+HEALTH_MODEL_SIZE_BYTES = _HEALTH_SPEC.size_bytes
 EXPECTED_MODEL_SHA256 = {
     DETECTOR_MODEL_PATH: DETECTOR_MODEL_SHA256,
     HEALTH_MODEL_PATH: HEALTH_MODEL_SHA256,
 }
-DETECTOR_IMAGE_SIZE = 640
-HEALTH_IMAGE_SIZE = 320
+DETECTOR_IMAGE_SIZE = _DETECTOR_SPEC.image_size
+HEALTH_IMAGE_SIZE = _HEALTH_SPEC.image_size
 DEFAULT_DETECTION_CONFIDENCE = 0.25
 DEFAULT_MIN_DETECTION_CONFIDENCE = 0.50
 DEFAULT_HEALTH_THRESHOLD = 0.70
@@ -62,18 +86,20 @@ LOW_DETECTION_CONFIDENCE_WARNING = (
     "판단하지 않았습니다."
 )
 MAX_IMAGE_PIXELS = 100_000_000
-SPECIES_BY_CLASS_ID = {
-    0: "느타리",
-    1: "양송이",
-    2: "큰느타리",
-    3: "팽이",
-    4: "표고",
-}
-DETECTOR_MODEL_NAMES = dict(SPECIES_BY_CLASS_ID)
-HEALTH_MODEL_NAMES = {
-    0: "0_healthy",
-    1: "1_disease_suspected",
-}
+SPECIES_BY_CLASS_ID = dict(_DETECTOR_SPEC.class_mapping)
+DETECTOR_MODEL_NAMES = dict(_DETECTOR_SPEC.raw_class_mapping)
+HEALTH_STATUS_BY_CLASS_ID = dict(_HEALTH_SPEC.class_mapping)
+HEALTH_MODEL_NAMES = dict(_HEALTH_SPEC.raw_class_mapping)
+HEALTHY_CLASS_ID = next(
+    class_id
+    for class_id, status in HEALTH_STATUS_BY_CLASS_ID.items()
+    if status == "HEALTHY"
+)
+DISEASE_SUSPECTED_CLASS_ID = next(
+    class_id
+    for class_id, status in HEALTH_STATUS_BY_CLASS_ID.items()
+    if status == "DISEASE_SUSPECTED"
+)
 DISCLAIMER = "AI 분석 참고 결과이며 확정 진단이 아닙니다."
 FORBIDDEN_PATH_PATTERNS = (
     re.compile(r"/mnt/[A-Za-z](?:/|$)", re.IGNORECASE),
@@ -85,6 +111,7 @@ FORBIDDEN_PATH_PATTERNS = (
 
 @dataclass(frozen=True)
 class Detection:
+    # 모델의 한 객체 탐지를 클래스 의미·xyxy 좌표·신뢰도로 정규화한 값 객체다.
     class_id: int
     species: str
     bbox: tuple[float, float, float, float]
@@ -92,6 +119,7 @@ class Detection:
 
 
 class DetectorProtocol(Protocol):
+    # 실제 Ultralytics 모델과 테스트 대역이 같은 predict 계약을 따르게 한다.
     model_name: str
 
     def predict(self, image: Image.Image) -> Sequence[Detection]: ...
@@ -173,6 +201,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         if value is not None:
             resolved = project_path(value)
             allowed = (ARTIFACTS_ROOT / "health_predictions").resolve()
+            # 사용자 지정 출력은 서비스 산출물 전용 allowlist 아래로만 제한한다.
             if not resolved.is_relative_to(allowed):
                 parser.error(
                     f"--{name.replace('_', '-')}은 "
@@ -205,6 +234,7 @@ def _validated_box(
     box: Sequence[float],
     image_size: tuple[int, int] | None = None,
 ) -> tuple[float, float, float, float]:
+    # NaN/무한대, 역전 좌표, 선택적 이미지 경계까지 한곳에서 검증한다.
     if len(box) != 4:
         raise ValueError("bbox는 x1,y1,x2,y2 네 값이어야 합니다")
     x1, y1, x2, y2 = (
@@ -224,6 +254,7 @@ def _validated_box(
 def group_detections_by_species(
     detections: Sequence[Detection],
 ) -> dict[str, list[Detection]]:
+    # 같은 품종의 여러 객체를 한 건강 crop으로 묶기 전에 클래스 매핑을 엄격히 확인한다.
     grouped: dict[str, list[Detection]] = {}
     class_by_species: dict[str, int] = {}
     for detection in detections:
@@ -243,6 +274,7 @@ def group_detections_by_species(
             raise ValueError("동일 species에 서로 다른 class_id가 있습니다")
         class_by_species[detection.species] = detection.class_id
         grouped.setdefault(detection.species, []).append(detection)
+    # 객체와 품종 순서를 고정해 모델 반환 순서와 무관한 재현 가능한 JSON을 만든다.
     return {
         species: sorted(
             items,
@@ -268,6 +300,7 @@ def group_detections_by_species(
 def union_bbox(
     boxes: Sequence[Sequence[float]],
 ) -> tuple[float, float, float, float]:
+    # 한 품종의 모든 탐지 객체를 포함하는 최소 외접 사각형을 구한다.
     if not boxes:
         raise ValueError("union bbox에 하나 이상의 bbox가 필요합니다")
     valid = [_validated_box(box) for box in boxes]
@@ -283,6 +316,7 @@ def outward_integer_box(
     box: Sequence[float],
     image_size: tuple[int, int],
 ) -> tuple[int, int, int, int]:
+    # float bbox를 안쪽으로 줄이지 않도록 시작은 floor, 끝은 ceil한 뒤 이미지에 clip한다.
     x1, y1, x2, y2 = _validated_box(box)
     width, height = image_size
     result = (
@@ -308,6 +342,7 @@ def padded_union_crop_box(
     if not 0.0 <= padding_ratio <= 0.5:
         raise ValueError("padding ratio는 0~0.5여야 합니다")
     x1, y1, x2, y2 = union_bbox(boxes)
+    # 학습 데이터 crop 규칙과 맞추기 위해 bbox가 아닌 원본 폭·높이 비율로 padding한다.
     pad_x = width * padding_ratio
     pad_y = height * padding_ratio
     crop = (
@@ -326,6 +361,7 @@ def health_status(
     disease_probability: float,
     threshold: float,
 ) -> tuple[str, float]:
+    # 확률 자체의 유효성을 먼저 확인한 뒤 top1이 threshold 미만이면 판정을 보류한다.
     healthy = _finite(healthy_probability, "HEALTHY probability")
     disease = _finite(disease_probability, "DISEASE probability")
     if not 0.0 <= healthy <= 1.0 or not 0.0 <= disease <= 1.0:
@@ -336,6 +372,7 @@ def health_status(
         raise ValueError("health threshold 범위 오류")
     confidence = max(healthy, disease)
     if confidence < threshold:
+        # UNCERTAIN은 학습 클래스가 아니라 서비스 수준의 confidence 상태다.
         return "UNCERTAIN", confidence
     return (
         "HEALTHY" if healthy >= disease else "DISEASE_SUSPECTED",
@@ -348,6 +385,7 @@ def _invoke_detector(
     image: Image.Image,
     detection_threshold: float,
 ) -> list[Detection]:
+    # threshold-aware 대역/구현이면 모델 호출 단계에 threshold를 전달하고 최종적으로도 재필터한다.
     if hasattr(detector, "predict_with_threshold"):
         raw = detector.predict_with_threshold(image, detection_threshold)
     else:
@@ -365,6 +403,7 @@ def _invoke_classifier(
     classifier: Any,
     crop: Image.Image,
 ) -> tuple[float, float]:
+    # 구현체 종류와 무관하게 정확히 두 확률을 반환하는지 공통 계약을 검증한다.
     values = classifier.predict(crop)
     if not isinstance(values, Sequence) or len(values) != 2:
         raise ValueError("건강 분류기는 두 확률을 반환해야 합니다")
@@ -381,6 +420,7 @@ def base_response(
     min_detection_confidence: float,
     health_threshold: float,
 ) -> dict[str, Any]:
+    # 성공·미탐지·불확실 응답이 같은 스키마와 threshold 메타데이터를 공유하게 한다.
     return {
         "analysis_type": "MUSHROOM_HEALTH_CHECK_V1",
         "status": "SUCCESS",
@@ -411,6 +451,7 @@ def predict_health(
     health_threshold: float = DEFAULT_HEALTH_THRESHOLD,
     padding_ratio: float = DEFAULT_PADDING_RATIO,
 ) -> dict[str, Any]:
+    # 파일 경로가 아닌 PIL 이미지만 받아 API 계층에서도 재사용 가능한 추론 흐름을 제공한다.
     if not isinstance(image, Image.Image) or image.width <= 0 or image.height <= 0:
         raise ValueError("유효한 PIL 이미지가 필요합니다")
     if image.width * image.height > MAX_IMAGE_PIXELS:
@@ -431,6 +472,7 @@ def predict_health(
         health_threshold,
     )
     # Preserve the caller's image object and mode.
+    # 호출자가 넘긴 객체와 색상 모드를 바꾸지 않도록 별도 RGB 복사본으로 추론한다.
     inference_image = image.copy().convert("RGB")
     detections = _invoke_detector(
         detector,
@@ -438,6 +480,7 @@ def predict_health(
         detection_threshold,
     )
     if not detections:
+        # 버섯 미탐지는 예외가 아니라 정상적인 도메인 응답 상태로 반환한다.
         response["status"] = "NO_MUSHROOM_DETECTED"
         response["warnings"].append(
             "NO_MUSHROOM_DETECTED: 버섯 객체를 탐지하지 못했습니다."
@@ -449,6 +492,7 @@ def predict_health(
             "MULTIPLE_SPECIES_DETECTED: 서로 다른 품종을 각각 분석했습니다."
         )
     for species, items in grouped.items():
+        # 같은 품종 객체 전체를 union하여 품종당 건강 분류를 정확히 한 번 수행한다.
         boxes = [item.bbox for item in items]
         union = outward_integer_box(
             union_bbox(boxes),
@@ -462,6 +506,7 @@ def predict_health(
         detection_confidences = [float(item.confidence) for item in items]
         minimum_detection = min(detection_confidences)
         if minimum_detection < min_detection_confidence:
+            # 그룹 내 객체 하나라도 신뢰도가 낮으면 잘못된 crop 진단을 피하려 분류를 생략한다.
             healthy = None
             disease = None
             status = "UNCERTAIN"
@@ -521,6 +566,7 @@ def draw_annotated(
     image: Image.Image,
     response: Mapping[str, Any],
 ) -> Image.Image:
+    # 응답 bbox와 건강 결과를 입력 복사본에만 그려 원본 이미지를 보존한다.
     annotated = image.copy().convert("RGB")
     draw = ImageDraw.Draw(annotated)
     font = _font(max(14, min(28, annotated.width // 40)))
@@ -558,6 +604,7 @@ def draw_annotated(
 
 
 def load_valid_image(path: Path) -> Image.Image:
+    # EXIF 회전을 먼저 반영해 사람이 보는 방향과 모델 좌표계가 일치하도록 한다.
     if not path.is_file():
         raise ValueError("입력 이미지 파일이 없습니다")
     try:
@@ -574,6 +621,7 @@ def load_valid_image(path: Path) -> Image.Image:
 
 
 def file_fingerprint(path: Path) -> tuple[int, int, str]:
+    # 입력/모델의 실행 전후 불변성을 크기·mtime·SHA-256으로 확인한다.
     stat = path.stat()
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -586,6 +634,7 @@ def file_fingerprint(path: Path) -> tuple[int, int, str]:
 def isolated_ultralytics_runtime(
     runtime_parent: Path | None = None,
 ) -> Iterator[Path]:
+    # Ultralytics/torch/matplotlib의 설정·캐시 쓰기를 일회성 임시 디렉터리로 모은다.
     parent = str(runtime_parent) if runtime_parent is not None else None
     with tempfile.TemporaryDirectory(
         prefix="mushroom-health-runtime-",
@@ -622,6 +671,7 @@ def isolated_ultralytics_runtime(
             os.chdir(runtime)
             yield runtime
         finally:
+            # 추론 오류가 나도 cwd와 모든 관련 환경 변수를 호출 전 값으로 복원한다.
             os.chdir(old_cwd)
             for key, value in old_values.items():
                 if value is None:
@@ -637,6 +687,7 @@ class UltralyticsDetector:
         self.model = model
         self.device = device
         names = {int(key): str(value) for key, value in model.names.items()}
+        # class id/품종 순서가 승인본과 다르면 이후 결과 해석이 잘못되므로 즉시 거부한다.
         if names != DETECTOR_MODEL_NAMES:
             raise RuntimeError("품종 detector class mapping 불일치")
 
@@ -645,6 +696,7 @@ class UltralyticsDetector:
         image: Image.Image,
         threshold: float,
     ) -> list[Detection]:
+        # auto는 Ultralytics의 장치 선택에 맡기고 명시 장치만 그대로 전달한다.
         device = None if self.device == "auto" else self.device
         results = self.model.predict(
             source=image,
@@ -673,6 +725,7 @@ class UltralyticsDetector:
             if class_id not in SPECIES_BY_CLASS_ID:
                 raise RuntimeError("품종 detector class 범위 오류")
             # Clip harmless numerical spillover from model coordinates.
+            # 부동소수점 연산으로 경계를 아주 조금 넘은 좌표만 이미지 범위로 보정한다.
             x1, y1, x2, y2 = (_finite(value, "bbox") for value in box)
             clipped = (
                 max(0.0, min(float(image.width), x1)),
@@ -705,6 +758,7 @@ class UltralyticsHealthClassifier:
         self.model = model
         self.device = device
         names = {int(key): str(value) for key, value in model.names.items()}
+        # 0=healthy, 1=disease 순서를 고정해 확률 의미가 뒤집히는 모델을 차단한다.
         if names != HEALTH_MODEL_NAMES:
             raise RuntimeError("건강 classifier class mapping 불일치")
 
@@ -721,12 +775,17 @@ class UltralyticsHealthClassifier:
         if len(results) != 1 or results[0].probs is None:
             raise RuntimeError("건강 classifier probability가 없습니다")
         values = results[0].probs.data.detach().cpu().tolist()
-        if len(values) != 2:
+        if len(values) != len(HEALTH_MODEL_NAMES):
             raise RuntimeError("건강 classifier class 수가 2가 아닙니다")
-        top1 = 0 if values[0] >= values[1] else 1
+        top1 = max(range(len(values)), key=values.__getitem__)
+        # raw probability로 계산한 top1과 라이브러리 메타데이터를 교차 검증한다.
         if int(results[0].probs.top1) != top1:
             raise RuntimeError("건강 classifier top1 mapping 불일치")
-        return float(values[0]), float(values[1])
+        # 서비스가 기대하는 tuple 순서는 manifest의 class id와 무관하게 건강/질병 순서다.
+        return (
+            float(values[HEALTHY_CLASS_ID]),
+            float(values[DISEASE_SUSPECTED_CLASS_ID]),
+        )
 
 
 def load_fixed_models(
@@ -742,6 +801,7 @@ def load_fixed_models(
     if not detector_path.is_file() or not health_model_path.is_file():
         raise FileNotFoundError("고정 detector 또는 health best.pt가 없습니다")
     if verify_sha256:
+        # 파일명만 같은 다른 모델을 실행하지 않도록 로딩 전에 승인 SHA-256을 확인한다.
         approved_models = (
             ("detector", detector_path, DETECTOR_MODEL_SHA256),
             ("health", health_model_path, HEALTH_MODEL_SHA256),
@@ -754,6 +814,7 @@ def load_fixed_models(
                 )
     from ultralytics import YOLO
 
+    # task를 명시해 detector/classifier가 각자 올바른 Ultralytics head로 로드되게 한다.
     detector = YOLO(str(detector_path.resolve()), task="detect")
     classifier = YOLO(str(health_model_path.resolve()), task="classify")
     return (
@@ -763,6 +824,7 @@ def load_fixed_models(
 
 
 def assert_deidentified_response(response: Mapping[str, Any]) -> None:
+    # 최종 JSON 전체를 직렬화한 뒤 Linux/Windows 로컬 절대경로 패턴을 검사한다.
     serialized = json.dumps(
         response,
         ensure_ascii=False,
@@ -780,6 +842,7 @@ def invalid_response(
     health_threshold: float,
     detail: str,
 ) -> dict[str, Any]:
+    # 상세 내부 예외 대신 정해진 상태와 안전한 설명만 반환해 정상 응답 스키마를 유지한다.
     return {
         "analysis_type": "MUSHROOM_HEALTH_CHECK_V1",
         "status": status,
@@ -804,6 +867,7 @@ def write_optional_outputs(
     json_output: Path | None,
     overwrite: bool,
 ) -> None:
+    # annotation과 JSON을 모두 staging한 뒤 함께 교체해 한쪽만 갱신되는 상태를 막는다.
     targets: list[tuple[Path, str]] = []
     if annotated_output is not None and annotated_image is not None:
         targets.append((annotated_output, "annotated"))
@@ -838,6 +902,7 @@ def write_optional_outputs(
     activated: list[Path] = []
     preserve_backup = False
     try:
+        # 최종 확장자와 인코딩을 명시한 임시 파일을 먼저 완성한다.
         for index, (target, kind) in enumerate(targets):
             suffix = ".jpg" if kind == "annotated" else ".json"
             staged_path = staging / f"{index:02d}{suffix}"
@@ -864,6 +929,7 @@ def write_optional_outputs(
         for index, target in enumerate(staged):
             target.parent.mkdir(parents=True, exist_ok=True)
             if target.exists():
+                # overwrite 대상은 삭제 대신 backup 디렉터리로 이동해 rollback에 사용한다.
                 backup_path = backup / f"{index:02d}_{target.name}"
                 os.replace(target, backup_path)
                 backups[target] = backup_path
@@ -871,6 +937,7 @@ def write_optional_outputs(
             os.replace(source, target)
             activated.append(target)
     except Exception as activation_error:
+        # 부분 활성화 파일을 제거하고 기존 파일을 역순으로 복구한다.
         rollback_errors: list[Exception] = []
         for target in reversed(activated):
             if target.exists():
@@ -885,6 +952,7 @@ def write_optional_outputs(
                 except Exception as rollback_error:
                     rollback_errors.append(rollback_error)
         if rollback_errors:
+            # 자동 복구까지 실패하면 수동 복구를 위해 backup을 삭제하지 않는다.
             preserve_backup = True
             raise RuntimeError(
                 "단일 이미지 출력 rollback 실패; 복구용 backup을 보존했습니다"
@@ -899,6 +967,7 @@ def write_optional_outputs(
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    # 모델과 입력 이미지를 실행 전 fingerprint해 추론 과정의 읽기 전용 계약을 검사한다.
     model_before = {
         path: file_fingerprint(path)
         for path in (DETECTOR_MODEL_PATH, HEALTH_MODEL_PATH)
@@ -929,6 +998,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     padding_ratio=args.padding_ratio,
                 )
         except Exception:
+            # 내부 경로·스택을 노출하지 않고 API 소비자가 처리할 수 있는 상태로 축약한다.
             response = invalid_response(
                 "INFERENCE_FAILED",
                 detection_threshold=args.detection_confidence,
@@ -938,6 +1008,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.annotated_output is not None and response["results"]:
             annotated_image = draw_annotated(image, response)
     assert_deidentified_response(response)
+    # 출력 저장 전에 보호 입력이 처음과 동일한지 최종 확인한다.
     if {
         path: file_fingerprint(path)
         for path in (DETECTOR_MODEL_PATH, HEALTH_MODEL_PATH)

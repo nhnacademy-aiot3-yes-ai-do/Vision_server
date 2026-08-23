@@ -1,7 +1,8 @@
 # Runtime model directory
 
-이 디렉터리는 Git에 모델 가중치를 저장하지 않고, 로컬 실행 또는 Docker
-build 직전에 승인된 두 모델을 준비하는 위치입니다.
+이 디렉터리의 두 모델은 Vision_server 비공개 Git 저장소에서 코드와 함께
+버전 관리하는 서비스 실행 모델입니다. 다른 `artifacts/` 원본을 복사하지 않고
+아래 두 파일만 로컬 실행과 Docker 이미지 빌드의 단일 기준으로 사용합니다.
 
 ```text
 runtime/models/
@@ -9,15 +10,15 @@ runtime/models/
 └── health/best.pt
 ```
 
-다음 명령은 원본 모델과 manifest의 크기·SHA-256을 검증한 뒤 위 경로에
-원자적으로 복사합니다.
+모델을 교체할 때는 해당 `best.pt`와 `models/model-manifest.json`의
+`sizeBytes`, `sha256`, 버전을 같은 변경으로 갱신합니다. 다음 명령은 두 파일을
+변경하지 않고 manifest와 일치하는지만 검증합니다.
 
 ```bash
-python scripts/prepare_runtime_models.py
-python scripts/prepare_runtime_models.py --check-only
+python scripts/verify_runtime_models.py
+make verify-models
 ```
 
-기존 runtime 파일이 승인본과 다르면 자동으로 덮어쓰지 않습니다. 검토 후
-교체가 필요할 때만 `--overwrite`를 명시합니다.
-
-`*.pt`는 `.gitignore`로 제외됩니다. 모델을 Git에 강제로 추가하지 마세요.
+두 `best.pt`만 `.gitignore`의 명시적 예외이며 저장소와 GHCR Package는
+비공개로 유지해야 합니다. 임의 모델, 학습 checkpoint와 사용자 이미지는
+여기에 추가하지 않습니다.

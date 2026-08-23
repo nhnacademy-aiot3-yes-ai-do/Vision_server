@@ -1,3 +1,4 @@
+# 업로드 검증부터 잠금 기반 추론까지 서비스 계층을 모델 대역으로 독립 검증한다.
 from __future__ import annotations
 
 import asyncio
@@ -14,6 +15,7 @@ import pytest
 from PIL import Image
 
 
+# pytest를 어느 작업 디렉터리에서 실행해도 프로젝트 패키지를 import하도록 루트를 추가한다.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -30,9 +32,11 @@ from app.services.mushroom_health_service import (
 from scripts import predict_mushroom_health as predictor
 
 
+# autouse fixture가 함수를 바꾸기 전에 운영 executor 구현을 별도로 보관해 동작 자체도 테스트한다.
 PRODUCTION_RUN_SYNC_IN_EXECUTOR = service_module.run_sync_in_executor
 
 
+# 대부분의 서비스 단위 테스트에서는 스레드를 없애고 동기 작업을 즉시 실행해 결과에만 집중한다.
 @pytest.fixture(autouse=True)
 def run_service_thread_work_inline(
     monkeypatch: pytest.MonkeyPatch,
@@ -48,6 +52,7 @@ def run_service_thread_work_inline(
     monkeypatch.setattr(service_module, "run_sync_in_executor", run_sync)
 
 
+# filename·MIME·파일 핸들·비동기 close를 가진 UploadFile 최소 대역이다.
 class FakeUpload:
     def __init__(
         self,
@@ -72,6 +77,7 @@ class FakeUpload:
         self._buffer.close()
 
 
+# 지정된 탐지 목록을 반환하며 호출 횟수와 입력 이미지 크기를 기록한다.
 class FakeDetector:
     model_name = "fake-detector"
 
@@ -92,6 +98,7 @@ class FakeDetector:
         return list(self.detections)
 
 
+# 지정 확률을 반환하며 분류 호출 횟수와 crop 크기를 기록한다.
 class FakeClassifier:
     model_name = "fake-classifier"
 
@@ -106,6 +113,7 @@ class FakeClassifier:
         return self.probabilities
 
 
+# 서비스가 매 요청마다 준비된 모델 쌍만 조회하는지 관찰하는 레지스트리 대역이다.
 class FakeRegistry:
     def __init__(self, detector: Any, classifier: Any) -> None:
         self.detector = detector
@@ -117,6 +125,7 @@ class FakeRegistry:
         return self.detector, self.classifier
 
 
+# 내부 경로가 포함된 레지스트리 오류를 의도적으로 발생시켜 비식별 오류 변환을 시험한다.
 class FailingRegistry:
     def get_models(self) -> tuple[Any, Any]:
         raise ModelRegistryError(
@@ -124,6 +133,7 @@ class FailingRegistry:
         )
 
 
+# EXIF 방향 정보를 선택적으로 포함한 유효 JPEG를 메모리에서 생성한다.
 def jpeg_bytes(
     *,
     size: tuple[int, int] = (100, 80),
@@ -138,6 +148,7 @@ def jpeg_bytes(
     return output.getvalue()
 
 
+# 이미지 형식과 픽셀 제한 검증에 사용할 유효 PNG를 메모리에서 생성한다.
 def png_bytes(*, size: tuple[int, int] = (20, 20)) -> bytes:
     image = Image.new("RGB", size, (20, 60, 100))
     output = io.BytesIO()
@@ -145,6 +156,7 @@ def png_bytes(*, size: tuple[int, int] = (20, 20)) -> bytes:
     return output.getvalue()
 
 
+# 느타리 class_id와 신뢰도를 고정하고 bbox만 바꾸기 쉬운 탐지 결과 도우미이다.
 def oyster_detection(
     bbox: tuple[float, float, float, float],
 ) -> predictor.Detection:
@@ -156,6 +168,7 @@ def oyster_detection(
     )
 
 
+# 테스트별로 업로드 한도와 건강 판정 임계값만 손쉽게 바꾼 설정을 만든다.
 def settings(
     *,
     max_upload_bytes: int = 10 * 1024 * 1024,
@@ -167,6 +180,7 @@ def settings(
     )
 
 
+# 비동기 analyze_upload을 동기 테스트에서 실행하고 서비스 executor를 항상 정리한다.
 def run_analysis(
     service: MushroomHealthService,
     upload: FakeUpload,
@@ -179,6 +193,7 @@ def run_analysis(
         service.close()
 
 
+# 운영 executor 도우미가 모델 작업을 이벤트 루프가 아닌 worker 스레드에서 순서대로 실행하는지 확인한다.
 def test_production_executor_helper_runs_work_off_event_loop() -> None:
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     main_thread = threading.get_ident()
@@ -205,6 +220,7 @@ def test_production_executor_helper_runs_work_off_event_loop() -> None:
     assert all(thread != main_thread for _value, thread in results)
 
 
+# 호출 코루틴이 취소되어도 worker가 끝난 뒤 CancelledError가 전달되는지 확인한다.
 def test_executor_cancellation_waits_for_worker_completion() -> None:
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     completed = threading.Event()
@@ -230,6 +246,7 @@ def test_executor_cancellation_waits_for_worker_completion() -> None:
     assert completed.is_set()
 
 
+# 같은 품종 bbox들을 합친 union 영역과 이미지 크기 기준 15% padding crop을 재사용하는지 확인한다.
 def test_service_reuses_union_crop_and_image_relative_15_percent_padding() -> None:
     detector = FakeDetector(
         [
@@ -252,6 +269,7 @@ def test_service_reuses_union_crop_and_image_relative_15_percent_padding() -> No
     assert upload.closed
 
 
+# 이진 분류 확률의 최대값과 임계값에 따라 세 공개 건강 상태가 선택되는지 확인한다.
 @pytest.mark.parametrize(
     ("probabilities", "expected_status"),
     [
@@ -280,6 +298,7 @@ def test_service_maps_health_probabilities_to_public_states(
     assert detector.calls == classifier.calls == registry.get_calls == 1
 
 
+# 여러 요청이 동시에 들어와도 inference_lock이 실제 모델 호출을 한 번씩 직렬화하는지 확인한다.
 def test_inference_lock_serializes_concurrent_model_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -338,6 +357,7 @@ def test_inference_lock_serializes_concurrent_model_calls(
     assert detector.calls == classifier.calls == registry.get_calls == 4
 
 
+# 읽기·디코딩·추론 과정이 호출자가 제공한 원본 bytes 내용을 바꾸지 않는지 확인한다.
 def test_upload_processing_does_not_mutate_source_bytes() -> None:
     payload = jpeg_bytes()
     before = hashlib.sha256(payload).hexdigest()
@@ -350,6 +370,7 @@ def test_upload_processing_does_not_mutate_source_bytes() -> None:
     assert hashlib.sha256(payload).hexdigest() == before
 
 
+# EXIF 회전은 적용하되 JPEG 형식 검증 정책과 RGB 변환은 그대로 유지하는지 확인한다.
 def test_decode_applies_exif_orientation_without_changing_format_policy() -> None:
     payload = jpeg_bytes(size=(40, 20), orientation=6)
 
@@ -359,6 +380,7 @@ def test_decode_applies_exif_orientation_without_changing_format_policy() -> Non
     assert decoded.size == (20, 40)
 
 
+# JPEG로 선언한 PNG 바이트처럼 실제 형식이 다른 파일을 415로 거부하는지 확인한다.
 def test_declared_format_must_match_image_bytes() -> None:
     with pytest.raises(HealthServiceError) as captured:
         decode_image_bytes(png_bytes(), "JPEG")
@@ -367,6 +389,7 @@ def test_declared_format_must_match_image_bytes() -> None:
     assert captured.value.status == "INVALID_IMAGE"
 
 
+# 확장자와 MIME type 불일치 시 모델을 조회하지 않고 업로드 핸들을 닫는지 확인한다.
 def test_extension_and_mime_type_must_match_and_upload_is_closed() -> None:
     upload = FakeUpload(
         jpeg_bytes(),
@@ -387,6 +410,7 @@ def test_extension_and_mime_type_must_match_and_upload_is_closed() -> None:
     assert upload.closed
 
 
+# 업로드 바이트 한도를 초과하면 이미지 디코딩과 모델 조회 전에 413으로 중단하는지 확인한다.
 def test_upload_byte_limit_rejects_before_decode_and_model_call() -> None:
     payload = jpeg_bytes()
     upload = FakeUpload(payload)
@@ -407,6 +431,7 @@ def test_upload_byte_limit_rejects_before_decode_and_model_call() -> None:
     assert upload.closed
 
 
+# 총 픽셀 수가 안전 한도를 넘으면 모델 호출 전 400 오류로 변환되는지 확인한다.
 def test_pixel_limit_is_checked_before_model_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -431,6 +456,7 @@ def test_pixel_limit_is_checked_before_model_call(
     assert registry.get_calls == 0
 
 
+# Pillow 압축 폭탄 경고를 내부 정보 없는 안전한 INVALID_IMAGE 오류로 변환하는지 확인한다.
 def test_pillow_decompression_bomb_is_converted_to_safe_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -445,6 +471,7 @@ def test_pillow_decompression_bomb_is_converted_to_safe_error(
     assert "path" not in captured.value.public_message.lower()
 
 
+# 손상된 이미지 바이트는 모델을 조회하지 않고 400으로 거부되는지 확인한다.
 def test_corrupt_image_is_rejected_without_model_call() -> None:
     registry = FakeRegistry(
         FakeDetector([]),
@@ -459,6 +486,7 @@ def test_corrupt_image_is_rejected_without_model_call() -> None:
     assert registry.get_calls == 0
 
 
+# 레지스트리 내부 오류를 절대 경로가 없는 일반 추론 실패로 바꾸는지 확인한다.
 def test_model_registry_error_is_converted_without_secret_or_path() -> None:
     service = MushroomHealthService(  # type: ignore[arg-type]
         FailingRegistry(),

@@ -1,3 +1,6 @@
+# Mac/Linux 런타임 진단 보고서가 네트워크 없이 안전하게 만들어지는지 검증한다.
+# fake MPS/CUDA 객체로 버전·가속기·모델 유무는 정확히 보고하면서
+# 로컬 경로나 위험한 환경변수 값은 숨기는지 확인한다.
 from __future__ import annotations
 
 import json
@@ -13,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from scripts import check_runtime_environment as doctor
 
 
+# MPS 지원이 빌드되어 있고 현재 장치에서도 사용 가능하다고 응답하는 torch backend 대역이다.
 class FakeMPS:
     @staticmethod
     def is_built() -> bool:
@@ -23,12 +27,14 @@ class FakeMPS:
         return True
 
 
+# CUDA를 사용할 수 없다고 응답하여 macOS 계열 런타임 상황을 재현하는 대역이다.
 class FakeCUDA:
     @staticmethod
     def is_available() -> bool:
         return False
 
 
+# 설치 메타데이터 조회를 실제 환경과 분리하고 기대 버전을 고정하는 helper이다.
 def fake_version(package: str) -> str:
     return {
         "torch": "2.11.0",
@@ -37,6 +43,7 @@ def fake_version(package: str) -> str:
     }[package]
 
 
+# 오프라인 진단이 버전·가속기·모델 존재 여부를 완전하게 보고하되 절대 경로는 숨기는지 검증한다.
 def test_environment_report_is_offline_path_safe_and_complete(
     tmp_path: Path,
 ) -> None:
@@ -70,7 +77,9 @@ def test_environment_report_is_offline_path_safe_and_complete(
     assert "/mnt/" not in serialized
 
 
+# torch 패키지가 없어도 import 예외 세부정보 없이 NOT_INSTALLED와 미확인 상태를 반환하는지 검증한다.
 def test_missing_torch_is_reported_without_import_or_exception_details() -> None:
+    # 요청한 모든 패키지가 설치되지 않은 상황을 재현하는 메타데이터 reader이다.
     def missing_version(package: str) -> str:
         raise doctor.metadata.PackageNotFoundError(package)
 
@@ -89,6 +98,7 @@ def test_missing_torch_is_reported_without_import_or_exception_details() -> None
     assert report["healthDevice"] == "auto"
 
 
+# 경로처럼 위험한 장치 설정값을 그대로 출력하지 않고 REDACTED로 치환하는지 검증한다.
 def test_unsafe_device_value_is_not_printed() -> None:
     secret_like_value = "/home/example/private-device"
 

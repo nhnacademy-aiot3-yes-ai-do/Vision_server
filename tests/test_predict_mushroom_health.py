@@ -1,3 +1,6 @@
+# 실제 모델 없이 핵심 추론 알고리즘의 외부 동작을 검증한다.
+# 품종별 grouping과 union crop, 15% padding, confidence gate,
+# 건강 상태 매핑, 입력·모델 불변성과 경로 비노출을 확인한다.
 from __future__ import annotations
 
 import hashlib
@@ -14,6 +17,7 @@ from PIL import Image
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+# 같은 이름으로 이미 로드된 모듈은 재사용하고, 아니면 지정 경로의 스크립트를 직접 import하는 helper이다.
 def load_module(name: str, path: Path) -> object:
     existing = sys.modules.get(name)
     if existing is not None:
@@ -26,16 +30,19 @@ def load_module(name: str, path: Path) -> object:
     return module
 
 
+# 실제 추론 스크립트를 패키지 설치 여부와 무관하게 테스트 대상 모듈로 불러온다.
 prediction = load_module(
     "predict_mushroom_health",
     PROJECT_ROOT / "scripts" / "predict_mushroom_health.py",
 )
 
 
+# 테스트 전후 모델 파일 내용이 바뀌지 않았는지 비교할 SHA-256을 계산하는 helper이다.
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+# 준비된 탐지 결과를 반환하고 입력 이미지 크기와 호출 횟수를 기록하는 detector 대역이다.
 class FakeDetector:
     model_name = "fake-yolo11n-species"
 
@@ -48,6 +55,7 @@ class FakeDetector:
         return list(self.detections)
 
 
+# 품종 그룹별 준비된 확률을 순서대로 반환하고 crop 크기를 기록하는 classifier 대역이다.
 class FakeClassifier:
     model_name = "fake-yolo11n-health"
 
@@ -62,6 +70,7 @@ class FakeClassifier:
         return self.probabilities.pop(0)
 
 
+# 테스트가 읽기 쉽게 품종·bbox·신뢰도를 지정한 Detection 객체를 만드는 helper이다.
 def detection(
     *,
     class_id: int,
@@ -77,6 +86,7 @@ def detection(
     )
 
 
+# 탐지 결과가 품종별로 묶이고 같은 품종의 여러 bbox가 하나의 union bbox가 되는지 검증한다.
 def test_species_grouping_and_union_bbox() -> None:
     detections = [
         detection(
@@ -112,6 +122,7 @@ def test_species_grouping_and_union_bbox() -> None:
     ) == (50, 5, 90, 30)
 
 
+# padding이 union 크기가 아닌 원본 이미지 크기를 기준으로 계산되고 이미지 경계에서 잘리는지 검증한다.
 def test_union_crop_uses_image_relative_15_percent_padding_and_clips() -> None:
     # Padding is based on the source width/height: 15 px horizontally and
     # 12 px vertically, not 15% of the union-box size.
@@ -129,6 +140,7 @@ def test_union_crop_uses_image_relative_15_percent_padding_and_clips() -> None:
     ) == (0, 0, 95, 80)
 
 
+# 탐지 결과가 없으면 성공적인 미탐지 응답을 만들고 건강 분류기를 호출하지 않는지 검증한다.
 def test_no_detection_does_not_call_health_classifier() -> None:
     image = Image.new("RGB", (100, 80), (20, 30, 40))
     detector = FakeDetector([])
@@ -155,6 +167,7 @@ def test_no_detection_does_not_call_health_classifier() -> None:
     json.dumps(result, ensure_ascii=False, allow_nan=False)
 
 
+# 한 품종 그룹의 최소 탐지 신뢰도가 기준 미만이면 분류를 건너뛰고 nullable 결과를 내는지 검증한다.
 def test_detection_confidence_below_minimum_skips_classifier() -> None:
     image = Image.new("RGB", (100, 80), "white")
     detector = FakeDetector(
@@ -198,6 +211,7 @@ def test_detection_confidence_below_minimum_skips_classifier() -> None:
     assert prediction.draw_annotated(image, response).size == image.size
 
 
+# 최소 탐지 신뢰도와 정확히 같은 경계값은 건강 분류 대상으로 포함되는지 검증한다.
 def test_detection_confidence_equal_to_minimum_runs_classifier() -> None:
     image = Image.new("RGB", (100, 80), "white")
     detector = FakeDetector(
@@ -230,6 +244,7 @@ def test_detection_confidence_equal_to_minimum_runs_classifier() -> None:
     ]
 
 
+# 신뢰도가 낮은 품종만 UNCERTAIN 처리하고 다른 품종 그룹의 분류는 계속하는지 검증한다.
 def test_low_confidence_only_skips_its_species_group() -> None:
     image = Image.new("RGB", (100, 80), "white")
     detector = FakeDetector(
@@ -269,6 +284,7 @@ def test_low_confidence_only_skips_its_species_group() -> None:
     assert by_species["표고"]["health_confidence"] == pytest.approx(0.92)
 
 
+# 같은 품종의 여러 탐지는 한 번만 분류하고 서로 다른 품종은 각각 한 번씩 분류하는지 검증한다.
 def test_multiple_species_are_classified_once_per_species_group() -> None:
     image = Image.new("RGB", (100, 80), (50, 60, 70))
     detector = FakeDetector(
@@ -330,6 +346,7 @@ def test_multiple_species_are_classified_once_per_species_group() -> None:
     json.dumps(response, ensure_ascii=False, allow_nan=False)
 
 
+# 최대 건강 확률과 불확실 임계값 조합이 세 공개 건강 상태로 정확히 매핑되는지 검증한다.
 @pytest.mark.parametrize(
     ("probabilities", "expected_status"),
     [
@@ -372,6 +389,7 @@ def test_health_probability_mapping_and_uncertain_threshold(
     assert result["health_status"] == expected_status
 
 
+# 추론이 호출자의 이미지 바이트와 모델 파일의 내용·크기·수정 시각을 변경하지 않는지 검증한다.
 def test_prediction_does_not_modify_input_or_fake_model_files(
     tmp_path: Path,
 ) -> None:
@@ -413,6 +431,7 @@ def test_prediction_does_not_modify_input_or_fake_model_files(
     ) == before_stats
 
 
+# 직렬화 응답에 Path 객체나 Linux·Windows 로컬 절대 경로가 포함되지 않는지 검증한다.
 def test_response_contains_no_path_objects_or_local_absolute_paths() -> None:
     image = Image.new("RGB", (100, 80), "white")
     response: dict[str, Any] = prediction.predict_health(

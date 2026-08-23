@@ -1,3 +1,4 @@
+# 환경 변수 문자열을 타입이 보장된 설정 객체로 바꾸고 잘못된 값은 시작 단계에서 거부한다.
 """Validated environment-backed configuration for the health-check API."""
 
 from __future__ import annotations
@@ -10,10 +11,12 @@ from typing import Mapping
 from scripts import predict_mushroom_health as predictor
 
 
+# 일반 업로드 기본 한도와 설정으로도 넘을 수 없는 절대 상한을 분리한다.
 DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 HARD_MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 
 
+# 값이 없거나 공백이면 기본값을 쓰고, 값이 있으면 실수로 엄격하게 변환한다.
 def _parse_float(
     environment: Mapping[str, str],
     name: str,
@@ -28,6 +31,7 @@ def _parse_float(
         raise ValueError(f"{name} must be a number") from exc
 
 
+# 바이트 제한처럼 정수여야 하는 환경 변수를 변환한다.
 def _parse_int(
     environment: Mapping[str, str],
     name: str,
@@ -42,6 +46,7 @@ def _parse_int(
         raise ValueError(f"{name} must be an integer") from exc
 
 
+# 운영 환경에서 자주 쓰는 여러 참·거짓 표기를 bool 값으로 정규화한다.
 def _parse_bool(
     environment: Mapping[str, str],
     name: str,
@@ -58,6 +63,7 @@ def _parse_bool(
     raise ValueError(f"{name} must be a boolean")
 
 
+# 모델 경로 문자열의 앞뒤 공백과 사용자 홈 표기를 정리해 Path로 만든다.
 def _parse_path(
     environment: Mapping[str, str],
     name: str,
@@ -69,6 +75,7 @@ def _parse_path(
     return Path(raw.strip()).expanduser()
 
 
+# 모델 위치, 추론 임계값, 업로드 정책을 한 번 검증한 뒤 변경 불가능하게 보관한다.
 @dataclass(frozen=True)
 class HealthAPISettings:
     """Validated process configuration for models, thresholds, and uploads."""
@@ -85,6 +92,7 @@ class HealthAPISettings:
     verify_model_sha256: bool = True
     device: str = "auto"
 
+    # 객체 생성 경로와 관계없이 모든 숫자 범위 및 필수 문자열 제약을 동일하게 검사한다.
     def __post_init__(self) -> None:
         if not 0.0 <= self.detection_confidence <= 1.0:
             raise ValueError(
@@ -107,11 +115,13 @@ class HealthAPISettings:
         if not self.device.strip():
             raise ValueError("HEALTH_DEVICE must not be empty")
 
+    # 주입된 매핑 또는 실제 프로세스 환경 변수를 읽어 완전한 설정 객체를 만든다.
     @classmethod
     def from_env(
         cls,
         environment: Mapping[str, str] | None = None,
     ) -> "HealthAPISettings":
+        # 테스트에서는 별도 매핑을 주입하고 실제 실행에서는 os.environ을 사용한다.
         source = os.environ if environment is None else environment
         return cls(
             detector_model_path=_parse_path(

@@ -1,8 +1,9 @@
-# Apple Silicon macOS development runtime.
+# Apple Silicon macOS 로컬 개발 런타임이다.
 #
-# These are standard PyPI versions without a CUDA local-version suffix or a
-# CUDA-only index. torch 2.11 and torchvision 0.26 are the matching release
-# pair. Actual MPS execution must still be verified on the team's MacBooks.
+# CUDA 전용 suffix/index가 없는 표준 PyPI 버전을 사용한다. torch 2.11과
+# torchvision 0.26은 서로 맞는 release pair이며, 실제 MPS 실행 가능 여부는
+# 팀의 MacBook에서 별도로 검증해야 한다.
 -r requirements-common.txt
 torch==2.11.0
 torchvision==0.26.0
+ultralytics==8.4.106

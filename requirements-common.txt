@@ -1,8 +1,7 @@
-# Direct, platform-neutral dependencies used by Mushroom Vision Service.
-# PyTorch and torchvision are selected by the platform-specific runtime.
+# FastAPI 계약과 torch 없는 기본 CI가 함께 사용하는 경량 공통 의존성이다.
+# Ultralytics/PyTorch/torchvision은 가속기별 runtime 파일에서만 설치한다.
 fastapi==0.140.0
 uvicorn==0.51.0
 python-multipart==0.0.32
 pillow==12.2.0
-ultralytics==8.4.106
 pydantic==2.13.4

@@ -1,6 +1,7 @@
-# Linux deployment entry point.
+# Linux 컨테이너 배포용 의존성 진입점이다.
 #
-# The team-approved CPU or CUDA PyTorch BASE_IMAGE must already provide a
-# mutually compatible torch/torchvision pair. Installing this file must not
-# replace that platform runtime with a macOS wheel or an unapproved CUDA build.
+# 팀이 승인한 CPU/CUDA PyTorch BASE_IMAGE가 호환되는 torch/torchvision을
+# 이미 제공해야 한다. 이 파일 설치 과정이 해당 런타임을 macOS wheel이나
+# 승인되지 않은 CUDA build로 교체하면 안 된다.
 -r requirements-common.txt
+ultralytics==8.4.106

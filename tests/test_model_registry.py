@@ -1,3 +1,4 @@
+# 실제 대형 모델 대신 임시 파일과 wrapper 대역으로 레지스트리의 상태 전이·무결성을 검증한다.
 from __future__ import annotations
 
 import hashlib
@@ -14,6 +15,7 @@ from typing import Any, Callable
 import pytest
 
 
+# 어느 위치에서 pytest를 실행해도 프로젝트 모듈을 가져오도록 import 루트를 맞춘다.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -28,9 +30,11 @@ from app.core.model_registry import (
 from scripts import predict_mushroom_health as predictor
 
 
+# 테스트 로더도 운영 로더와 같은 detector/classifier 쌍을 반환하도록 타입을 맞춘다.
 ModelLoader = Callable[..., tuple[Any, Any]]
 
 
+# 모델 파일 존재 여부와 지문 검사를 통과할 작은 임시 가중치 파일 두 개를 만든다.
 def _fake_weights(tmp_path: Path) -> tuple[Path, Path]:
     detector = tmp_path / "detector.pt"
     classifier = tmp_path / "health.pt"
@@ -39,6 +43,7 @@ def _fake_weights(tmp_path: Path) -> tuple[Path, Path]:
     return detector, classifier
 
 
+# 운영 지문과 같은 크기·수정 시각·SHA-256 조합을 테스트 전후 비교용으로 계산한다.
 def _fingerprint(path: Path) -> tuple[int, int, str]:
     stat = path.stat()
     return (
@@ -48,12 +53,14 @@ def _fingerprint(path: Path) -> tuple[int, int, str]:
     )
 
 
+# Ultralytics처럼 `wrapper.model.names`에 클래스 매핑이 있는 최소 대역을 만든다.
 def _wrapper(names: dict[int, str]) -> SimpleNamespace:
     # Mirror the production Ultralytics wrappers: class names live on
     # ``wrapper.model.names``, rather than directly on the wrapper.
     return SimpleNamespace(model=SimpleNamespace(names=dict(names)))
 
 
+# 운영 계약과 정확히 같은 클래스 매핑을 가진 유효한 탐지기·분류기 쌍이다.
 def _valid_pair() -> tuple[SimpleNamespace, SimpleNamespace]:
     return (
         _wrapper(predictor.DETECTOR_MODEL_NAMES),
@@ -61,6 +68,7 @@ def _valid_pair() -> tuple[SimpleNamespace, SimpleNamespace]:
     )
 
 
+# 테스트별 설정과 임시 모델 경로가 연결된 새 레지스트리를 만드는 공통 도우미이다.
 def _registry(
     tmp_path: Path,
     loader: ModelLoader,
@@ -85,6 +93,7 @@ def _registry(
     )
 
 
+# 두 번 load해도 로더는 한 번만 실행되고 같은 모델 객체가 재사용되는지 확인한다.
 def test_load_is_singleton_and_accepts_wrapper_model_names(
     tmp_path: Path,
 ) -> None:
@@ -120,6 +129,7 @@ def test_load_is_singleton_and_accepts_wrapper_model_names(
     ]
 
 
+# 여러 스레드가 동시에 load해도 생명주기 잠금이 로더를 정확히 한 번만 실행하는지 확인한다.
 def test_concurrent_load_calls_loader_exactly_once(tmp_path: Path) -> None:
     worker_count = 12
     start = threading.Barrier(worker_count)
@@ -155,6 +165,7 @@ def test_concurrent_load_calls_loader_exactly_once(tmp_path: Path) -> None:
     assert results[0][1] is pair[1]
 
 
+# 탐지기나 분류기의 클래스 매핑이 다르면 캐시 없이 FAILED로 전환되는지 확인한다.
 @pytest.mark.parametrize("invalid_model", ["detector", "classifier"])
 def test_class_mapping_failure_sets_failed_without_cached_models(
     tmp_path: Path,
@@ -182,6 +193,7 @@ def test_class_mapping_failure_sets_failed_without_cached_models(
         registry.get_models()
 
 
+# SHA 검증 플래그와 장치 문자열이 변형 없이 실제 모델 로더에 전달되는지 확인한다.
 @pytest.mark.parametrize("verify_sha256", [True, False])
 def test_approved_sha_verification_flag_and_device_are_forwarded(
     tmp_path: Path,
@@ -212,6 +224,7 @@ def test_approved_sha_verification_flag_and_device_are_forwarded(
     ]
 
 
+# 설정 객체에 지정한 두 모델 경로가 기본값 대신 로더 인자로 전달되는지 확인한다.
 def test_settings_model_paths_are_forwarded_to_loader(
     tmp_path: Path,
 ) -> None:
@@ -241,6 +254,7 @@ def test_settings_model_paths_are_forwarded_to_loader(
     ]
 
 
+# 환경 변수의 장치 값, 특히 공백 기본값이 정규화되어 로더까지 이어지는지 확인한다.
 @pytest.mark.parametrize(
     ("raw_device", "expected_device"),
     [
@@ -284,6 +298,7 @@ def test_health_device_environment_is_normalized_and_forwarded_to_loader(
     ]
 
 
+# 첫 모델 생성 뒤 두 번째 모델 로드가 실패해도 부분 모델이 캐시에 남지 않는지 확인한다.
 def test_partial_loader_failure_leaves_zero_cached_models(
     tmp_path: Path,
 ) -> None:
@@ -310,6 +325,7 @@ def test_partial_loader_failure_leaves_zero_cached_models(
     assert registry.load_attempts == 1
 
 
+# READY 이전 get_models가 암묵적 로드를 하지 않고 명확히 실패하는지 확인한다.
 def test_get_models_before_ready_fails_without_loading(tmp_path: Path) -> None:
     loader_calls = 0
 
@@ -328,6 +344,7 @@ def test_get_models_before_ready_fails_without_loading(tmp_path: Path) -> None:
     assert registry.state is RegistryState.UNLOADED
 
 
+# 정상 종료가 모델 파일을 바꾸지 않고 메모리 캐시와 지문만 해제하는지 확인한다.
 def test_shutdown_clears_cache_without_changing_model_files(
     tmp_path: Path,
 ) -> None:
@@ -354,6 +371,7 @@ def test_shutdown_clears_cache_without_changing_model_files(
         registry.get_models()
 
 
+# 공개 상태에는 논리적 모델 이름만 있고 실제 로컬 경로는 없는지 확인한다.
 def test_public_status_never_exposes_model_or_local_paths() -> None:
     settings = HealthAPISettings(device="cpu")
     detector_path = Path("/mnt/d/private/models/detector.pt")
@@ -381,6 +399,7 @@ def test_public_status_never_exposes_model_or_local_paths() -> None:
     predictor.assert_deidentified_response(status)
 
 
+# 모든 지원 환경 변수가 올바른 타입과 경로로 변환되어 설정 객체에 반영되는지 확인한다.
 def test_settings_are_loaded_from_environment_and_validated() -> None:
     settings = HealthAPISettings.from_env(
         {
@@ -409,6 +428,7 @@ def test_settings_are_loaded_from_environment_and_validated() -> None:
     )
 
 
+# 모델 경로 환경 변수가 비어 있으면 predictor의 로컬 기본 경로를 유지하는지 확인한다.
 def test_blank_model_path_environment_uses_local_defaults() -> None:
     settings = HealthAPISettings.from_env(
         {
@@ -421,6 +441,7 @@ def test_blank_model_path_environment_uses_local_defaults() -> None:
     assert settings.health_model_path == predictor.HEALTH_MODEL_PATH
 
 
+# 허용 범위를 벗어난 숫자와 알 수 없는 bool 표기를 애플리케이션 시작 전에 거부하는지 확인한다.
 @pytest.mark.parametrize(
     ("name", "value"),
     [
@@ -440,6 +461,7 @@ def test_invalid_environment_settings_fail_fast(
         HealthAPISettings.from_env({name: value})
 
 
+# 실제 고정 모델 로드는 명시적 환경 변수로 허용한 통합 테스트에서만 실행하고 파일 불변성을 확인한다.
 @pytest.mark.skipif(
     os.environ.get("RUN_MODEL_INTEGRATION_TESTS", "").strip().lower()
     != "true",

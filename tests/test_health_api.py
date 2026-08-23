@@ -1,3 +1,4 @@
+# 실제 모델 없이 ASGI 요청을 만들어 건강 판별 API의 공개 계약과 생명주기를 검증한다.
 from __future__ import annotations
 
 import asyncio
@@ -12,6 +13,7 @@ import pytest
 from PIL import Image
 
 
+# 어느 작업 디렉터리에서 실행해도 프로젝트 패키지를 import할 수 있게 루트를 우선 경로에 둔다.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -23,9 +25,11 @@ from app.services import mushroom_health_service as service_module
 from scripts import predict_mushroom_health as predictor
 
 
+# multipart 본문을 직접 조립할 때 재현 가능한 고정 경계 문자열을 사용한다.
 BOUNDARY = "mushroom-health-test-boundary"
 
 
+# 단위 테스트에서는 스레드 생명주기를 배제하고 executor 작업을 호출 스레드에서 즉시 실행한다.
 @pytest.fixture(autouse=True)
 def run_fake_work_inline(monkeypatch: pytest.MonkeyPatch) -> None:
     async def run_sync(_executor: Any, function: Any) -> Any:
@@ -35,6 +39,7 @@ def run_fake_work_inline(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(service_module, "run_sync_in_executor", run_sync)
 
 
+# 외부 이미지 파일 없이 API 요청에 넣을 유효한 JPEG 바이트를 메모리에서 생성한다.
 def jpeg_bytes(
     *,
     size: tuple[int, int] = (100, 80),
@@ -46,6 +51,7 @@ def jpeg_bytes(
     return buffer.getvalue()
 
 
+# 호출 인자와 실패 여부를 관찰할 수 있는 품종 탐지기 대역이다.
 class FakeDetector:
     model_name = "fake-species-detector"
 
@@ -77,6 +83,7 @@ class FakeDetector:
         return list(self.detections)
 
 
+# crop 크기와 호출 횟수를 기록하고 준비한 확률을 순서대로 반환하는 분류기 대역이다.
 class FakeClassifier:
     model_name = "fake-health-classifier"
 
@@ -94,6 +101,7 @@ class FakeClassifier:
         return self.probabilities.pop(0)
 
 
+# 앱 lifespan의 load/get/shutdown 호출 횟수와 모델 재사용 여부를 검증하는 레지스트리 대역이다.
 class FakeRegistry:
     def __init__(self, settings: HealthAPISettings) -> None:
         self.settings = settings
@@ -123,6 +131,7 @@ class FakeRegistry:
         self.loaded = False
 
 
+# 직접 수집한 ASGI 상태 코드·헤더·본문을 테스트에서 편하게 읽기 위한 값 객체이다.
 @dataclass(frozen=True)
 class ASGIResponse:
     status_code: int
@@ -133,6 +142,7 @@ class ASGIResponse:
         return json.loads(self.content.decode("utf-8"))
 
 
+# httpx 없이 lifespan과 ASGI receive/send 프로토콜을 직접 구동하는 동기 테스트 클라이언트이다.
 class DirectASGIClient:
     """Minimal synchronous ASGI client without the optional httpx package."""
 
@@ -142,6 +152,7 @@ class DirectASGIClient:
         self.lifespan: Any = None
 
     def __enter__(self) -> "DirectASGIClient":
+        # 별도 이벤트 루프에서 FastAPI lifespan 시작 훅까지 완료한 뒤 요청을 허용한다.
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
         self.lifespan = self.application.router.lifespan_context(
@@ -153,6 +164,7 @@ class DirectASGIClient:
     def __exit__(self, *exc_info: object) -> None:
         assert self.loop is not None
         try:
+            # 컨텍스트 종료 시 lifespan 종료 훅을 실행해 레지스트리 정리까지 검증한다.
             self.loop.run_until_complete(
                 self.lifespan.__aexit__(*exc_info)
             )
@@ -168,6 +180,7 @@ class DirectASGIClient:
         body: bytes,
         headers: dict[str, str],
     ) -> ASGIResponse:
+        # 본문 전체를 담은 단일 http.request 메시지를 애플리케이션에 공급한다.
         request_messages = [
             {
                 "type": "http.request",
@@ -185,6 +198,7 @@ class DirectASGIClient:
 
         async def send(message: dict[str, Any]) -> None:
             nonlocal response_status, response_headers
+            # ASGI가 나누어 보내는 응답 시작 정보와 본문 조각을 하나의 응답 객체로 수집한다.
             if message["type"] == "http.response.start":
                 response_status = int(message["status"])
                 response_headers = {
@@ -198,6 +212,7 @@ class DirectASGIClient:
             (key.lower().encode("latin-1"), value.encode("latin-1"))
             for key, value in headers.items()
         ]
+        # 실제 HTTP 서버가 만드는 것과 같은 최소 ASGI HTTP scope를 구성한다.
         scope = {
             "type": "http",
             "asgi": {"version": "3.0", "spec_version": "2.5"},
@@ -229,6 +244,7 @@ class DirectASGIClient:
         headers: dict[str, str] | None = None,
     ) -> ASGIResponse:
         assert self.loop is not None
+        # 테스트 본문은 동기 함수이므로 내부 비동기 요청을 클라이언트 이벤트 루프에서 끝까지 실행한다.
         return self.loop.run_until_complete(
             self._request(
                 method,
@@ -239,6 +255,7 @@ class DirectASGIClient:
         )
 
 
+# image 파일 파트 하나를 포함하는 multipart/form-data 본문과 Content-Type을 직접 만든다.
 def multipart_body(
     payload: bytes,
     *,
@@ -266,6 +283,7 @@ def multipart_body(
     return body, f"multipart/form-data; boundary={BOUNDARY}"
 
 
+# 모든 API 테스트가 같은 엔드포인트와 multipart 헤더로 POST하도록 묶은 도우미이다.
 def post_image(
     client: DirectASGIClient,
     payload: bytes,
@@ -282,7 +300,7 @@ def post_image(
     )
     return client.request(
         "POST",
-        "/api/v1/mushroom/health-check",
+        "/api/internal/mushrooms/health-check",
         body=body,
         headers={
             "content-type": multipart_type,
@@ -291,6 +309,7 @@ def post_image(
     )
 
 
+# 경계값을 명확히 확인할 수 있는 테스트 전용 설정을 제공한다.
 @pytest.fixture
 def settings() -> HealthAPISettings:
     return HealthAPISettings(
@@ -304,11 +323,13 @@ def settings() -> HealthAPISettings:
     )
 
 
+# 각 테스트에 호출 기록이 비어 있는 새 가짜 레지스트리를 제공한다.
 @pytest.fixture
 def registry(settings: HealthAPISettings) -> FakeRegistry:
     return FakeRegistry(settings)
 
 
+# 실제 create_app과 lifespan을 거쳐 요청할 수 있는 클라이언트를 준비하고 종료까지 수행한다.
 @pytest.fixture
 def api_client(
     settings: HealthAPISettings,
@@ -319,6 +340,7 @@ def api_client(
         yield client
 
 
+# 세 가지 건강 확률 구간이 공개 상태로 바뀌고 모든 JSON 필드가 camelCase인지 확인한다.
 @pytest.mark.parametrize(
     ("probabilities", "expected_status"),
     [
@@ -358,6 +380,7 @@ def test_valid_image_health_status_and_camel_case_contract(
     assert len(payload["results"]) == 1
     result = payload["results"][0]
     assert result["species"] == "느타리"
+    assert result["speciesCode"] == "OYSTER"
     assert result["speciesClassId"] == 0
     assert result["healthStatus"] == expected_status
     assert result["healthyProbability"] == pytest.approx(probabilities[0])
@@ -370,6 +393,7 @@ def test_valid_image_health_status_and_camel_case_contract(
     assert registry.detector.calls[-1]["threshold"] == pytest.approx(0.25)
 
 
+# 최소 탐지 신뢰도 미만이면 분류기를 호출하지 않고 건강 관련 값을 null로 내보내는지 확인한다.
 def test_low_detection_confidence_returns_null_health_values(
     api_client: DirectASGIClient,
     registry: FakeRegistry,
@@ -399,6 +423,7 @@ def test_low_detection_confidence_returns_null_health_values(
     assert '"diseaseSuspectedProbability":null' in serialized
 
 
+# 최소 탐지 신뢰도와 정확히 같은 경계값은 분류 대상으로 포함되는지 확인한다.
 def test_detection_confidence_equal_to_minimum_runs_health_classifier(
     api_client: DirectASGIClient,
     registry: FakeRegistry,
@@ -422,6 +447,7 @@ def test_detection_confidence_equal_to_minimum_runs_health_classifier(
     ]
 
 
+# 여러 품종 중 신뢰도가 낮은 품종만 보류하고 충분한 품종은 정상 분류하는지 확인한다.
 def test_low_detection_confidence_is_isolated_per_species(
     api_client: DirectASGIClient,
     registry: FakeRegistry,
@@ -455,6 +481,7 @@ def test_low_detection_confidence_is_isolated_per_species(
     assert len(registry.classifier.calls) == 1
 
 
+# 버섯을 찾지 못한 경우도 오류가 아닌 빈 성공 결과이며 분류기는 호출하지 않는지 확인한다.
 def test_no_detection_returns_successful_empty_result_without_classifier(
     api_client: DirectASGIClient,
     registry: FakeRegistry,
@@ -470,6 +497,7 @@ def test_no_detection_returns_successful_empty_result_without_classifier(
     assert registry.classifier.calls == []
 
 
+# 같은 품종의 여러 bbox는 하나로 묶고 서로 다른 품종은 별도 결과로 분류하는지 확인한다.
 def test_multiple_species_are_grouped_into_public_results(
     api_client: DirectASGIClient,
     registry: FakeRegistry,
@@ -505,11 +533,13 @@ def test_multiple_species_are_grouped_into_public_results(
     assert by_species["느타리"]["detectedCount"] == 2
     assert by_species["느타리"]["healthStatus"] == "HEALTHY"
     assert by_species["표고"]["detectedCount"] == 1
+    assert by_species["표고"]["speciesCode"] == "SHIITAKE"
     assert by_species["표고"]["speciesClassId"] == 4
     assert by_species["표고"]["healthStatus"] == "DISEASE_SUSPECTED"
     assert len(registry.classifier.calls) == 2
 
 
+# 빈 파일과 손상 파일을 모델 호출 전에 안전한 400 응답으로 거부하는지 확인한다.
 def test_empty_and_corrupt_uploads_are_safe_400(
     api_client: DirectASGIClient,
     registry: FakeRegistry,
@@ -523,6 +553,7 @@ def test_empty_and_corrupt_uploads_are_safe_400(
     assert registry.get_models_calls == 0
 
 
+# 지원하지 않는 형식 또는 확장자·MIME 불일치를 415로 거부하는지 확인한다.
 @pytest.mark.parametrize(
     ("filename", "content_type"),
     [
@@ -548,6 +579,7 @@ def test_mime_extension_mismatch_or_unsupported_type_is_415(
     assert registry.get_models_calls == 0
 
 
+# 설정된 업로드 바이트 상한을 넘으면 디코딩·모델 호출 전에 413을 반환하는지 확인한다.
 def test_upload_larger_than_configured_limit_is_413(
     api_client: DirectASGIClient,
     registry: FakeRegistry,
@@ -559,6 +591,7 @@ def test_upload_larger_than_configured_limit_is_413(
     assert registry.get_models_calls == 0
 
 
+# multipart 필드 이름이 계약과 다르면 FastAPI 검증이 422를 반환하는지 확인한다.
 def test_missing_image_field_is_framework_422(
     api_client: DirectASGIClient,
     registry: FakeRegistry,
@@ -575,6 +608,7 @@ def test_missing_image_field_is_framework_422(
     assert registry.get_models_calls == 0
 
 
+# 내부 모델 예외의 메시지와 절대 경로가 500 공개 응답으로 새지 않는지 확인한다.
 def test_internal_failure_is_safe_500_without_absolute_path(
     api_client: DirectASGIClient,
     registry: FakeRegistry,
@@ -596,6 +630,7 @@ def test_internal_failure_is_safe_500_without_absolute_path(
     assert "private model failure" not in serialized
 
 
+# 정상 응답에도 서버의 Linux·Windows 로컬 절대 경로가 포함되지 않는지 확인한다.
 def test_success_response_contains_no_local_absolute_path(
     api_client: DirectASGIClient,
 ) -> None:
@@ -608,6 +643,7 @@ def test_success_response_contains_no_local_absolute_path(
     assert "C:\\\\" not in serialized
 
 
+# 실행 장치 설정은 추론에만 쓰이고 응답과 OpenAPI 문서에는 공개되지 않는지 확인한다.
 def test_device_setting_is_not_exposed_in_response_or_openapi() -> None:
     settings = HealthAPISettings(
         detection_confidence=0.25,
@@ -638,6 +674,7 @@ def test_device_setting_is_not_exposed_in_response_or_openapi() -> None:
         assert "HEALTH_DEVICE" not in serialized
 
 
+# lifespan 전체에서 모델은 한 번 로드·종료되고 여러 요청이 같은 레지스트리를 쓰는지 확인한다.
 def test_registry_loads_once_for_multiple_requests_and_shuts_down_once(
     settings: HealthAPISettings,
 ) -> None:
@@ -657,6 +694,7 @@ def test_registry_loads_once_for_multiple_requests_and_shuts_down_once(
     assert fake.shutdown_calls == 1
 
 
+# OpenAPI가 multipart 입력, 상태 코드, camelCase 응답 및 nullable 확률을 정확히 문서화하는지 확인한다.
 def test_openapi_documents_multipart_contract_and_public_response(
     api_client: DirectASGIClient,
     registry: FakeRegistry,
@@ -666,7 +704,7 @@ def test_openapi_documents_multipart_contract_and_public_response(
     assert response.status_code == 200
     schema = response.json()
     operation = schema["paths"][
-        "/api/v1/mushroom/health-check"
+        "/api/internal/mushrooms/health-check"
     ]["post"]
     assert "multipart/form-data" in operation["requestBody"]["content"]
     assert {
