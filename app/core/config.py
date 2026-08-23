@@ -14,6 +14,9 @@ from scripts import predict_mushroom_health as predictor
 # 일반 업로드 기본 한도와 설정으로도 넘을 수 없는 절대 상한을 분리한다.
 DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 HARD_MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+# worker 1개·직렬 추론 계약에서 메모리에 동시에 머무를 분석 요청 수를 제한한다.
+DEFAULT_MAX_INFLIGHT_REQUESTS = 1
+HARD_MAX_INFLIGHT_REQUESTS = 32
 
 
 # 값이 없거나 공백이면 기본값을 쓰고, 값이 있으면 실수로 엄격하게 변환한다.
@@ -89,6 +92,7 @@ class HealthAPISettings:
     health_uncertain_threshold: float = predictor.DEFAULT_HEALTH_THRESHOLD
     padding_ratio: float = predictor.DEFAULT_PADDING_RATIO
     max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES
+    max_inflight_requests: int = DEFAULT_MAX_INFLIGHT_REQUESTS
     verify_model_sha256: bool = True
     device: str = "auto"
 
@@ -111,6 +115,10 @@ class HealthAPISettings:
         if not 0 < self.max_upload_bytes <= HARD_MAX_UPLOAD_BYTES:
             raise ValueError(
                 "HEALTH_MAX_UPLOAD_BYTES must be between 1 and 100 MiB"
+            )
+        if not 0 < self.max_inflight_requests <= HARD_MAX_INFLIGHT_REQUESTS:
+            raise ValueError(
+                "HEALTH_MAX_INFLIGHT_REQUESTS must be between 1 and 32"
             )
         if not self.device.strip():
             raise ValueError("HEALTH_DEVICE must not be empty")
@@ -158,6 +166,11 @@ class HealthAPISettings:
                 source,
                 "HEALTH_MAX_UPLOAD_BYTES",
                 DEFAULT_MAX_UPLOAD_BYTES,
+            ),
+            max_inflight_requests=_parse_int(
+                source,
+                "HEALTH_MAX_INFLIGHT_REQUESTS",
+                DEFAULT_MAX_INFLIGHT_REQUESTS,
             ),
             verify_model_sha256=_parse_bool(
                 source,

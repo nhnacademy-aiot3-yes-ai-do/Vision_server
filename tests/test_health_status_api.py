@@ -200,6 +200,6 @@ def test_main_openapi_documents_both_health_probes() -> None:
     assert ready["responses"]["503"]["content"]["application/json"][
         "schema"
     ]["$ref"].endswith("/ReadyStatusResponse")
-    assert "/api/internal/mushrooms/health-check" in schema["paths"]
+    assert "/api/v1/internal/mushrooms/health-check" in schema["paths"]
     assert registry.load_calls == 0
     assert registry.get_models_calls == 0

@@ -7,7 +7,7 @@
 | 서비스명 | `mushroom-vision-service` |
 | container port | `8000` |
 | Uvicorn workers | `1` |
-| 분석 API | `POST /api/internal/mushrooms/health-check` |
+| 분석 API | `POST /api/v1/internal/mushrooms/health-check` |
 | liveness | `GET /health/live` |
 | readiness | `GET /health/ready` |
 | image registry | private GitHub Container Registry(GHCR) |
@@ -229,7 +229,7 @@ curl --fail http://<vision-service>:8000/health/ready
 
 curl --fail-with-body \
   --form "image=@approved-smoke-image.jpg" \
-  http://<vision-service>:8000/api/internal/mushrooms/health-check
+  http://<vision-service>:8000/api/v1/internal/mushrooms/health-check
 ```
 
 확인 항목:

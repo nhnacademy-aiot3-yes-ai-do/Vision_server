@@ -300,7 +300,7 @@ def post_image(
     )
     return client.request(
         "POST",
-        "/api/internal/mushrooms/health-check",
+        "/api/v1/internal/mushrooms/health-check",
         body=body,
         headers={
             "content-type": multipart_type,
@@ -591,6 +591,44 @@ def test_upload_larger_than_configured_limit_is_413(
     assert registry.get_models_calls == 0
 
 
+# 동시 분석 한도 초과도 공통 공개 응답을 유지하며 429로 구분되는지 확인한다.
+def test_inference_capacity_exceeded_is_safe_429(
+    api_client: DirectASGIClient,
+    registry: FakeRegistry,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def reject_busy(
+        _service: Any,
+        upload: Any,
+    ) -> dict[str, Any]:
+        await upload.close()
+        raise service_module.HealthServiceError(
+            http_status=429,
+            status="SERVICE_BUSY",
+            public_message=(
+                "현재 분석 요청이 많습니다. 잠시 후 다시 시도해 주세요."
+            ),
+        )
+
+    monkeypatch.setattr(
+        service_module.MushroomHealthService,
+        "analyze_upload",
+        reject_busy,
+    )
+
+    response = post_image(api_client, jpeg_bytes())
+
+    assert response.status_code == 429
+    payload = response.json()
+    assert payload["status"] == "SERVICE_BUSY"
+    assert payload["results"] == []
+    assert payload["warnings"] == [
+        "AI 분석 참고 결과이며 확정 진단이 아닙니다.",
+        "SERVICE_BUSY: 현재 분석 요청이 많습니다. 잠시 후 다시 시도해 주세요.",
+    ]
+    assert registry.get_models_calls == 0
+
+
 # multipart 필드 이름이 계약과 다르면 FastAPI 검증이 422를 반환하는지 확인한다.
 def test_missing_image_field_is_framework_422(
     api_client: DirectASGIClient,
@@ -704,7 +742,7 @@ def test_openapi_documents_multipart_contract_and_public_response(
     assert response.status_code == 200
     schema = response.json()
     operation = schema["paths"][
-        "/api/internal/mushrooms/health-check"
+        "/api/v1/internal/mushrooms/health-check"
     ]["post"]
     assert "multipart/form-data" in operation["requestBody"]["content"]
     assert {
@@ -712,6 +750,7 @@ def test_openapi_documents_multipart_contract_and_public_response(
         "400",
         "413",
         "415",
+        "429",
         "422",
         "500",
     } <= set(operation["responses"])

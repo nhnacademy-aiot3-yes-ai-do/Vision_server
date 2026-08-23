@@ -1,0 +1,32 @@
+name: pr-review-notify
+
+on:
+  pull_request:
+    branches: [develop, main]
+    types: [opened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  notify:
+    # Fork가 아닌 같은 저장소의 브랜치에서 생성한 일반 PR만 알립니다.
+    if: >
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (github.event.action == 'ready_for_review' ||
+       github.event.pull_request.draft == false)
+
+    uses: nhnacademy-aiot3-yes-ai-do/Webhook/.github/workflows/discord-pr-notify.yml@main
+
+    with:
+      service_name: vision-server
+      pr_number: ${{ github.event.pull_request.number }}
+      pr_title: ${{ github.event.pull_request.title }}
+      pr_url: ${{ github.event.pull_request.html_url }}
+      author: ${{ github.event.pull_request.user.login }}
+      base_branch: ${{ github.event.pull_request.base.ref }}
+      head_branch: ${{ github.event.pull_request.head.ref }}
+
+    secrets:
+      DISCORD_PR_WEBHOOK_URL: ${{ secrets.DISCORD_PR_NOTIFICATION_HOOK_URL }}

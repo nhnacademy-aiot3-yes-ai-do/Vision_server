@@ -410,6 +410,7 @@ def test_settings_are_loaded_from_environment_and_validated() -> None:
             "HEALTH_UNCERTAIN_THRESHOLD": "0.81",
             "HEALTH_PADDING_RATIO": "0.2",
             "HEALTH_MAX_UPLOAD_BYTES": "2048",
+            "HEALTH_MAX_INFLIGHT_REQUESTS": "3",
             "HEALTH_VERIFY_MODEL_SHA256": "false",
             "HEALTH_DEVICE": "cpu",
         }
@@ -423,6 +424,7 @@ def test_settings_are_loaded_from_environment_and_validated() -> None:
         health_uncertain_threshold=0.81,
         padding_ratio=0.2,
         max_upload_bytes=2048,
+        max_inflight_requests=3,
         verify_model_sha256=False,
         device="cpu",
     )
@@ -450,6 +452,8 @@ def test_blank_model_path_environment_uses_local_defaults() -> None:
         ("HEALTH_UNCERTAIN_THRESHOLD", "-0.1"),
         ("HEALTH_PADDING_RATIO", "0.51"),
         ("HEALTH_MAX_UPLOAD_BYTES", "0"),
+        ("HEALTH_MAX_INFLIGHT_REQUESTS", "0"),
+        ("HEALTH_MAX_INFLIGHT_REQUESTS", "33"),
         ("HEALTH_VERIFY_MODEL_SHA256", "maybe"),
     ],
 )

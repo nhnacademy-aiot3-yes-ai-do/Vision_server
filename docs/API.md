@@ -3,7 +3,7 @@
 ## 호출 방식
 
 ```text
-POST /api/internal/mushrooms/health-check
+POST /api/v1/internal/mushrooms/health-check
 Content-Type: multipart/form-data
 Field: image
 ```
@@ -76,7 +76,7 @@ curl --fail-with-body \
   --request POST \
   --header "accept: application/json" \
   --form "image=@sample.jpg" \
-  http://localhost:8000/api/internal/mushrooms/health-check
+  http://localhost:8000/api/v1/internal/mushrooms/health-check
 ```
 
 OpenFeign에서는 파일 필드명이 반드시 `image`여야 합니다. 개념적인 Java
@@ -86,7 +86,7 @@ OpenFeign에서는 파일 필드명이 반드시 `image`여야 합니다. 개념
 @FeignClient(name = "vision-server", url = "${vision-server.url}")
 public interface VisionClient {
     @PostMapping(
-        value = "/api/internal/mushrooms/health-check",
+        value = "/api/v1/internal/mushrooms/health-check",
         consumes = MediaType.MULTIPART_FORM_DATA_VALUE
     )
     VisionResponse analyze(@RequestPart("image") Resource image);
@@ -160,12 +160,18 @@ MinIO에서 읽은 byte array는 filename을 제공하는 `Resource`로 감싸�
 | 413 | `INVALID_IMAGE` | 업로드 크기 초과 |
 | 415 | `INVALID_IMAGE` | 미지원 형식 또는 형식 불일치 |
 | 422 | FastAPI validation error | multipart `image` 필드 누락 |
+| 429 | `SERVICE_BUSY` | 현재 Pod의 동시 분석 상한 초과, backoff 후 재시도 |
 | 500 | `INFERENCE_FAILED` | 요약하지 않고 내부 서비스 오류 처리 |
 
 OpenFeign은 일반적으로 4xx/5xx에서 예외를 발생시키므로 AI-Server에
 예외 처리 또는 `ErrorDecoder`가 필요합니다. 연결 실패와 read timeout도
 별도 fallback 대상으로 처리합니다. Vision 오류를 정상 진단 문장으로
 바꾸면 안 됩니다.
+
+`HEALTH_MAX_INFLIGHT_REQUESTS`는 파일 bytes와 디코딩된 이미지를 동시에
+보유할 프로세스별 요청 수를 제한합니다. 용량이 찬 요청은 이미지 처리 전에
+429로 빠르게 거부됩니다. 단, FastAPI가 multipart `UploadFile`을 만드는
+네트워크 수신 단계는 이 서비스 계층 제한보다 먼저 수행됩니다.
 
 ## 상태 확인
 
@@ -192,6 +198,7 @@ OpenFeign은 일반적으로 4xx/5xx에서 예외를 발생시키므로 AI-Serve
 | `HEALTH_UNCERTAIN_THRESHOLD` | `0.70` | 0~1 |
 | `HEALTH_PADDING_RATIO` | `0.15` | 0~0.5 |
 | `HEALTH_MAX_UPLOAD_BYTES` | `10485760` | 1 byte~100 MiB |
+| `HEALTH_MAX_INFLIGHT_REQUESTS` | `1` | 1~32 |
 | `HEALTH_VERIFY_MODEL_SHA256` | `true` | boolean |
 | `HEALTH_DEVICE` | `auto` | 승인된 runtime device |
 
