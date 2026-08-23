@@ -1,4 +1,4 @@
-# private Git에서 직접 관리하는 두 runtime 모델의 공급망 계약을 검증한다.
+# Git에서 직접 관리하는 두 runtime 모델의 공급망 계약을 검증한다.
 # manifest의 고정 경로·크기·SHA-256, 무변경 검증, 누락·변조·symlink와
 # 저장소 밖 경로 차단을 작은 합성 모델로 확인한다.
 from __future__ import annotations

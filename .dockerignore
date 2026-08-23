@@ -22,7 +22,7 @@
 !models/
 !models/model-manifest.json
 
-# private Git에서 직접 관리하는 두 승인 모델만 예외적으로 허용한다.
+# Git에서 직접 관리하는 두 승인 모델만 예외적으로 허용한다.
 !runtime/
 !runtime/models/
 !runtime/models/detector/

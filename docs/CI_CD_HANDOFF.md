@@ -1,257 +1,152 @@
 # CI/CD Handoff
 
-## 배포 계약
+## 현재 배포 계약
 
-| 항목 | 값 또는 원칙 |
+| 항목 | 값 |
 | --- | --- |
-| 서비스명 | `mushroom-vision-service` |
+| 서비스명 | `vision-server` |
+| 플랫폼 | Linux `amd64`, CPU |
 | container port | `8000` |
 | Uvicorn workers | `1` |
 | 분석 API | `POST /api/v1/internal/mushrooms/health-check` |
 | liveness | `GET /health/live` |
 | readiness | `GET /health/ready` |
-| image registry | private GitHub Container Registry(GHCR) |
-| 배포 기준 | image tag가 아닌 immutable digest |
-| 모델 공급 | private Git의 두 `best.pt`를 image에 포함 |
+| image | `ghcr.io/nhnacademy-aiot3-yes-ai-do/vision_server` |
+| 배포 tag | 전체 40자리 Git commit SHA |
+| 모델 공급 | Git에서 관리하는 두 `best.pt`를 image에 포함 |
 
-Spring AI-Server만 내부 Service를 통해 Vision_server를 호출하는 구성을
-기본으로 합니다. Vision endpoint를 외부에 직접 공개할지는 보안·플랫폼
-검토 후 결정합니다.
+Vision은 외부 Ingress를 만들지 않습니다. AI Server가 Kubernetes 내부 DNS인
+`http://vision-server`를 통해 multipart `image`를 전송합니다. MinIO는 사용자
+사진 저장소이며 모델 배포 경로가 아닙니다.
 
-## 확정된 모델 배포 흐름
+## 브랜치별 자동화
 
-```mermaid
-flowchart LR
-    PR[Private Git PR<br/>code + models + manifest]
-    V[make verify-models]
-    T[Unit/API tests]
-    B[Docker build]
-    R[Private GHCR push]
-    S[Staging<br/>digest pin]
-    A[Approval]
-    P[Production<br/>same digest]
+```text
+feature → develop PR
+  ├─ PR 리뷰 Discord 알림
+  └─ 모델 SHA 검증 + pytest
 
-    PR --> V --> T --> B --> R --> S --> A --> P
+develop push
+  └─ 모델 SHA 검증 + pytest
+
+main push
+  └─ 모델 SHA 검증 + pytest
+     → Linux amd64 CPU image build
+     → GHCR latest + 전체 commit SHA tag push
+     → Config repository_dispatch
+     → Kubernetes rollout 및 중앙 Discord 결과 알림
 ```
 
-MinIO는 사용자 이미지 저장소이며 CI/CD 모델 공급 경로가 아닙니다.
-별도 모델 다운로드 단계 없이 코드, manifest와 두 모델을 하나의 image
-release로 취급합니다.
+SonarQube와 커버리지 검사는 Vision 배포 관문에 포함하지 않습니다. 대신
+모델 manifest/SHA 검증과 전체 핵심 pytest가 성공해야 image를 게시합니다.
 
-## 저장소와 package 권한
+## CPU image
 
-- Vision_server repository와 GHCR package를 private으로 유지합니다.
-- GitHub Actions의 기본 권한은 read-only로 두고 image 게시 job에만
-  `packages: write`와 필요한 최소 `contents: read`를 부여합니다.
-- pull request job에는 package push 권한과 production 환경 secret을 주지
-  않습니다.
-- Kubernetes에는 private GHCR pull에 필요한 최소 권한만 부여합니다.
-- registry token, image pull secret과 GitHub credential을 repository
-  파일·`.env.example`·로그에 남기지 않습니다.
-- 모델 공개 가능 여부가 별도로 승인되기 전 repository/package visibility를
-  public으로 바꾸지 않습니다.
+Dockerfile은 다음 runtime을 고정합니다.
 
-organization, branch protection, reviewer 수와 environment approval 정책은
-CI/CD 팀이 저장소 정책으로 확정해야 합니다.
+- base: Docker Official `python:3.12.14-slim-bookworm`의 immutable digest
+- `torch==2.11.0`
+- `torchvision==0.26.0`
+- `ultralytics==8.4.106`
+- PyTorch official CPU wheel index
 
-## Pull request CI
-
-일반 PR에서 최소한 다음 순서로 검증합니다.
-
-1. Python 3.12를 준비하고 torch 없는 `requirements-common.txt`와
-   `requirements-dev.txt` 설치
-2. `make verify-models`
-3. 남아 있는 전체 핵심 `pytest` 실행
-4. manifest와 predictor의 model name, size, SHA-256, class mapping 계약 확인
-5. Docker build context에 dataset, 외부 이미지, `.env`, cache와 Git
-   metadata가 들어가지 않는지 확인
-6. Dockerfile의 worker 1, non-root, 고정 model path와 SHA 검증 설정 확인
-
-승인된 Linux base image를 사용하는 실제 image build는 이 PR gate를 통과해
-main에 반영된 뒤 publish job에서 수행합니다. 조직 정책상 PR 단계의 image
-build까지 필수라면, 승인 base에 접근할 수 있는 별도 protected runner check를
-추가합니다.
-
-private repository checkout에 두 `best.pt`가 포함되므로 별도 모델
-다운로드 secret이나 네트워크 단계가 없어야 합니다. `make verify-models`는
-파일을 수정하지 않는 검증 단계입니다.
-
-기본 테스트는 실제 weight를 Ultralytics로 load하지 않고 fake model을
-사용하며, 두 binary는 manifest 검증 과정에서 크기와 SHA-256만 읽습니다.
-실제 model load smoke test는 모델과 필요한 accelerator를 제공하는 승인
-runner에서만 다음처럼 실행합니다.
-
-```bash
-RUN_MODEL_INTEGRATION_TESTS=true \
-python -m pytest -q tests/test_model_registry.py -k integration
-```
-
-## 플랫폼별 검증
-
-| lane | runtime | 검증 범위 |
-| --- | --- | --- |
-| GitHub hosted PR | `requirements-common.txt` + `requirements-dev.txt` | torch 없는 전체 fake-model/API/manifest gate |
-| macOS arm64 | `requirements-macos.txt` + `requirements-dev.txt` | fake-model 테스트, 모델 manifest 검증, 선택적 CPU/MPS smoke |
-| Linux CPU | 승인된 CPU PyTorch base + `requirements-runtime.txt` | image startup, model load, API smoke |
-| Linux CUDA | 승인된 CUDA base + `requirements-runtime.txt` | NVIDIA runner에서 CUDA startup/inference |
-
-Linux CPU와 CUDA image는 별도 base digest와 테스트 증거를 갖는 별도
-profile입니다. CUDA image를 일반 runner에서 build한 사실만으로 GPU 추론을
-검증했다고 기록하지 않습니다.
-
-확정이 필요한 값:
-
-- `TODO(LINUX_CPU_BASE)`: Python/PyTorch CPU base image digest
-- `TODO(LINUX_CUDA_BASE)`: CUDA base image digest와 driver 호환 범위
-- `TODO(TARGET_PROFILE)`: 최초 배포가 CPU인지 CUDA인지
-- `TODO(GHCR_NAME)`: `ghcr.io/<organization>/<package>`
-- `TODO(GIT_POLICY)`: 보호 branch, reviewer와 merge 정책
-- `TODO(RUNNERS)`: 실제 model CPU/CUDA/MPS 검증 runner
-
-## Docker build 계약
-
-`Dockerfile`은 `BASE_IMAGE`를 명시적으로 받습니다. 승인된 base는
-Python 3.12와 서로 호환되는 PyTorch/torchvision을 제공해야 합니다.
-`requirements-runtime.txt`가 accelerator용 PyTorch를 임의로 교체하면 안
-됩니다. pull request의 hosted test job은 Ultralytics/PyTorch를 설치하지
-않고 전체 핵심 테스트를 통과시킵니다. GHCR publish job은 이 test job이
-성공한 push 또는 수동 실행에서만 `packages: write` 권한을 받습니다.
+빌드 중 `pip check`, OpenCV import, PyTorch/torchvision 버전, CUDA 비활성화를
+검증합니다. slim Linux에서 OpenCV import에 필요한 최소 GL/XCB runtime도
+image에 포함합니다. 모델 파일은 manifest의 size와 SHA-256이 맞아야 합니다.
 
 ```bash
 make verify-models
-make docker-build \
-  BASE_IMAGE=<approved-python-pytorch-image-or-digest> \
-  IMAGE_NAME=ghcr.io/<organization>/vision-server:<tag>
+make docker-build IMAGE_NAME=vision-server:cpu-smoke
 ```
 
-image에 포함하는 저장소 파일은 최소화합니다.
+로컬 Mac의 Docker가 `amd64` emulation을 사용하면 빌드가 오래 걸릴 수 있습니다.
+최종 기준은 GitHub의 Linux amd64 runner에서 생성한 image입니다.
 
-- `app/`
-- `scripts/predict_mushroom_health.py`
-- `scripts/verify_runtime_models.py`
-- `models/model-manifest.json`
-- `runtime/models/detector/best.pt`
-- `runtime/models/health/best.pt`
-- runtime requirements
+## GitHub Actions 파일
 
-학습·평가 자료, reports, tests, `.git`, `.env`, 외부 이미지와 사용자
-업로드를 image에 포함하지 않습니다.
+| 파일 | 역할 |
+| --- | --- |
+| `_reusable-test.yml` | Python 3.12, 모델 검증, pytest 공통 절차 |
+| `develop-ci.yml` | develop push 검증 |
+| `pr-check.yml` | develop/main 대상 PR 검증 |
+| `pr-review-notify.yml` | PR Discord 알림 |
+| `deploy.yml` | main image 게시와 Config 배포 요청 |
 
-Container runtime 계약:
+배포 요청 JSON은 `.github/scripts/config-deployment.sh`와
+`dispatch-payload.jq`가 만듭니다. Sonar 관련 파일과 설정은 필요하지 않습니다.
 
-- numeric non-root user
-- read-only root filesystem
-- image에 포함된 `runtime/models` 경로는 애플리케이션이 수정할 수 없음
-- 제한된 writable `/tmp`
-- `HEALTH_VERIFY_MODEL_SHA256=true`
-- Uvicorn worker 1
+## 필요한 GitHub 설정
 
-## GHCR 게시와 tag
+Vision Server repository 또는 접근이 허용된 Organization 설정:
 
-사람이 읽는 release tag에는 서비스와 모델 bundle 버전을 함께 남깁니다.
+- Variable `GH_APP_CLIENT_ID`
+- Variable `VISION_CENTRAL_DEPLOY_ENABLED`
+- Secret `GH_APP_PRIVATE_KEY`
+- Secret `DISCORD_PR_NOTIFICATION_HOOK_URL`
 
-```text
-ghcr.io/<organization>/vision-server:0.1.0-model-v1
-```
+`GITHUB_TOKEN`은 Actions가 자동 제공하므로 따로 만들지 않습니다. GHCR push용
+PAT, Sonar secret, workspace_log 설정도 필요하지 않습니다.
 
-같은 build에 Git commit tag를 추가할 수 있지만 `latest`만으로 promotion
-또는 rollback하지 않습니다. CI가 image를 push한 뒤 registry가 반환한
-digest를 release evidence로 저장합니다.
+GitHub App은 `Config` repository에 접근할 수 있어야 합니다. GHCR package가
+private이면 Kubernetes에 image pull credential이 필요합니다. 현재 MVP에서는
+package를 public으로 두는 구성이 가장 단순합니다.
 
-권장 promotion:
+첫 게시 전에는 `VISION_CENTRAL_DEPLOY_ENABLED`를 만들지 않거나 `false`로 둡니다.
+Config의 Vision manifest를 먼저 병합한 뒤 Vision `main` workflow로 image만 게시하고,
+GitHub Packages의 `vision_server` package를 Public으로 전환합니다. 그다음 변수를
+`true`로 바꾸고 `deploy` workflow를 `main`에서 수동 실행합니다. 이후 `main` push는
+자동으로 중앙 배포를 요청합니다.
 
-```text
-PR 검증
-→ protected branch/release에서 image 1회 build
-→ private GHCR push
-→ 그 digest를 staging에 배포
-→ smoke와 승인
-→ 같은 digest를 production에 배포
-```
+중앙 배포 요청 직전에는 새 GitHub runner가 해당 SHA image를 인증 없이 조회합니다.
+이 검증이 실패하면 Config 요청을 보내지 않으므로 Kubernetes에 `ImagePullBackOff`
+상태를 만들지 않습니다.
 
-staging과 production 사이에서 image를 다시 build하지 않습니다.
+## Kubernetes 계약
 
-## Kubernetes handoff
+Config repository가 다음 resource를 관리합니다.
 
-```mermaid
-flowchart LR
-    G[Private GHCR<br/>immutable digest]
-    D[Kubernetes Deployment]
-    P[Vision Pod<br/>worker 1]
-    S[ClusterIP Service]
-    A[Spring AI-Server]
+- `Deployment/vision-server`: replica 1, worker 1, CPU
+- `Service/vision-server`: ClusterIP 80 → container 8000
+- `ConfigMap/vision-config`: threshold, upload limit, CPU device
+- AI ConfigMap의 `VISION_SERVER_URL=http://vision-server`
 
-    G -->|authenticated pull| D --> P --> S
-    A -->|multipart image| S
-```
+Pod는 `/etc/passwd`에 등록된 non-login UID 10001, read-only root filesystem,
+capability drop, RuntimeDefault seccomp를 사용합니다. 쓰기가 필요한 cache는
+크기 제한된 `/tmp`에만 둡니다.
 
-Deployment image는 다음 형태로 고정합니다.
+Kubernetes probe:
 
-```text
-ghcr.io/<organization>/vision-server@sha256:<image-digest>
-```
+- startup: `/health/ready`
+- readiness: `/health/ready`
+- liveness: `/health/live`
 
-필수 운영 설정:
+Config 중앙 배포는 `ghcr.io/.../vision_server:<40자리 SHA>`를 rollout합니다.
+`latest`는 사람이 확인할 수 있도록 함께 게시하지만 실제 rollout 기준이 아닙니다.
 
-- `DETECTOR_MODEL_PATH=/opt/mushroom-vision/runtime/models/detector/best.pt`
-- `HEALTH_MODEL_PATH=/opt/mushroom-vision/runtime/models/health/best.pt`
-- `HEALTH_VERIFY_MODEL_SHA256=true`
-- `HEALTH_DEVICE=cpu` 또는 승인된 `cuda:0`
-- liveness `/health/live`
-- readiness `/health/ready`
-- replica별 Uvicorn worker 1
+## 배포 smoke
 
-Pod security 권장값:
-
-- `runAsNonRoot: true`
-- `allowPrivilegeEscalation: false`
-- `readOnlyRootFilesystem: true`
-- Linux capabilities 모두 drop
-- `seccompProfile: RuntimeDefault`
-- 크기 제한된 `/tmp`만 writable
-
-플랫폼 팀이 정할 값:
-
-- `TODO(NAMESPACE)`: namespace와 quota
-- `TODO(SERVICE_ACCOUNT)`: GHCR pull identity
-- `TODO(RESOURCES)`: CPU, memory, ephemeral storage와 GPU
-- `TODO(NETWORK_POLICY)`: AI-Server에서 Vision Service로의 접근
-- `TODO(TIMEOUT)`: Vision 최대 처리시간을 반영한 ingress/client timeout
-- `TODO(OBSERVABILITY)`: logs, metrics, tracing과 alert
-
-## 배포 smoke test
-
-새 Pod가 뜬 뒤 순서대로 확인합니다.
+Pod가 READY가 된 뒤 AI Pod 또는 동일 cluster 내부에서 확인합니다.
 
 ```bash
-curl --fail http://<vision-service>:8000/health/live
-curl --fail http://<vision-service>:8000/health/ready
+curl --fail http://vision-server/health/live
+curl --fail http://vision-server/health/ready
 
 curl --fail-with-body \
   --form "image=@approved-smoke-image.jpg" \
-  http://<vision-service>:8000/api/v1/internal/mushrooms/health-check
+  http://vision-server/api/v1/internal/mushrooms/health-check
 ```
 
 확인 항목:
 
-- readiness가 두 모델 load 후에만 200인지
-- API가 camelCase 계약을 반환하는지
-- 시작 로그에 model name과 실제 device가 맞는지
-- 로그와 응답에 credential, host 경로와 stack trace가 없는지
-- Spring AI-Server의 OpenFeign timeout과 오류 처리가 동작하는지
+- 두 모델 load가 끝난 뒤에만 readiness가 200인지
+- 응답이 camelCase이며 경로·credential·stack trace를 노출하지 않는지
+- 로그의 device가 `cpu`인지
+- rollout 실패 시 Config가 직전 revision으로 rollback하는지
 
-## release evidence와 rollback
+## 후속 개선
 
-release마다 다음을 보존합니다.
-
-- Git commit SHA
-- detector·health model version과 두 model SHA-256
-- base image digest와 dependency 정보
-- Vision image tag와 최종 image digest
-- unit/integration/smoke test 결과
-- 배포 환경, 승인자와 배포 시각
-- 직전 정상 image digest
-
-rollback은 모델 object를 따로 되돌리는 작업이 아닙니다. Deployment의
-image를 직전 정상 digest로 바꾸고 새 Pod의 readiness를 확인하면 코드와
-모델이 함께 되돌아갑니다.
+- Linux 전이 의존성 lock/hash 파일
+- 실제 스마트폰 이미지 smoke fixture와 성능 기준
+- CPU memory/latency 실측 후 resource 및 replica 조정
+- AI Server의 Vision timeout·오류 변환·결과 저장
+- 필요 시 NetworkPolicy 적용을 위한 중앙 deploy script 확장
