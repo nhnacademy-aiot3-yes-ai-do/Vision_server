@@ -25,7 +25,7 @@ flowchart LR
 | MinIO | 사용자가 업로드한 이미지 저장 |
 | Spring AI-Server | MinIO 조회, multipart 요청, Vision 결과와 다른 정보의 요약·가공 |
 | Vision_server | 업로드 검증, 두 모델 추론, 구조화된 결과 반환 |
-| private Git/GHCR | Vision 코드·모델의 버전 관리와 배포 |
+| 팀 Git/GHCR | Vision 코드·모델의 버전 관리와 배포 |
 
 Vision_server는 MinIO endpoint, bucket, object key 또는 credential을 알지
 않습니다. 반대로 AI-Server는 `.pt` 파일과 Python 추론 구현을 관리하지
@@ -107,7 +107,7 @@ route에 YOLO 로직을 다시 작성하지 않고 service와 predictor를 재�
 
 ## 모델 생명주기와 readiness
 
-두 모델은 private Git의 다음 경로에서 코드와 함께 관리합니다.
+두 모델은 팀 Git의 다음 경로에서 코드와 함께 관리합니다.
 
 ```text
 runtime/models/detector/best.pt
@@ -169,11 +169,11 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    G[Private Git<br/>code + two best.pt]
+    G[Team Git<br/>code + two best.pt]
     V[Manifest verification]
     B[Docker build]
-    R[Private GHCR]
-    K[Kubernetes<br/>digest-pinned image]
+    R[Team GHCR]
+    K[Kubernetes<br/>full Git SHA image]
     A[Vision API<br/>worker 1]
 
     G --> V --> B --> R --> K --> A
@@ -181,7 +181,7 @@ flowchart LR
 
 Docker image는 코드, predictor, manifest와 두 모델을 함께 포함합니다.
 런타임에는 image에 포함된 모델만 사용합니다. 모델 변경은 새 Git commit,
-검증, 새 image와 새 digest 배포로 처리합니다.
+검증, 새 image와 전체 Git commit SHA tag 배포로 처리합니다.
 
 이 방식의 상세 규칙은 [모델 관리](MODEL_MANAGEMENT.md), 배포 설정은
 [CI/CD 인계](CI_CD_HANDOFF.md)를 확인하세요.
@@ -190,7 +190,7 @@ Docker image는 코드, predictor, manifest와 두 모델을 함께 포함합니
 
 - 업로드 원본을 Vision_server의 파일로 저장하지 않습니다.
 - 응답에 stack trace, host 경로와 모델 경로를 노출하지 않습니다.
-- private 저장소와 private GHCR에만 모델을 둡니다.
+- 모델은 현재 공개 팀 저장소와 팀 GHCR의 동일 image bundle로 관리합니다.
 - registry credential은 CI/CD와 Kubernetes Secret에만 둡니다.
 - 모델 파일은 실행 중 교체하지 않습니다.
 - 건강 결과를 확정 진단으로 표현하지 않습니다.

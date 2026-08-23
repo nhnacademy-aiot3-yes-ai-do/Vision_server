@@ -2,7 +2,7 @@
 
 ## 목적
 
-Apple Silicon Mac에서 private Git 저장소에 포함된 동일한 두 `best.pt`를
+Apple Silicon Mac에서 팀 Git 저장소에 포함된 동일한 두 `best.pt`를
 CPU 또는 MPS로 실행해 서비스와 API 계약을 검증합니다. Mac 전용 모델을
 학습하거나 Core ML로 변환하는 절차가 아닙니다.
 
@@ -67,7 +67,7 @@ make doctor-mac
 
 ## 3. Git 모델 검증
 
-private 저장소에는 다음 두 파일이 있어야 합니다.
+팀 저장소에는 다음 두 파일이 있어야 합니다.
 
 ```text
 runtime/models/detector/best.pt

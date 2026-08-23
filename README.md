@@ -108,7 +108,7 @@ make doctor-mac
 | --- | --- |
 | `requirements-common.txt` | FastAPI, Pillow 등 torch 없는 API·CI 공통 패키지 |
 | `requirements-macos.txt` | Ultralytics와 Apple Silicon용 PyTorch/torchvision |
-| `requirements-runtime.txt` | 승인된 Linux PyTorch base 위에 Ultralytics 설치 |
+| `requirements-runtime.txt` | Linux CPU image의 API·Ultralytics 의존성 |
 | `requirements-dev.txt` | pytest 등 개발·테스트 도구 |
 
 Mac의 CPU/MPS 검증은 [Mac 검증 가이드](docs/MAC_VALIDATION.md)를
@@ -200,19 +200,18 @@ Vision 코드와 모델을 하나의 Docker image로 build
         ↓
 team GitHub Container Registry(GHCR)에 push
         ↓
-Kubernetes가 승인된 image digest로 pull
+Kubernetes가 전체 Git commit SHA tag의 image를 pull
 ```
 
 실행 중 MinIO나 외부 저장소에서 모델을 내려받지 않습니다. 모델을 바꾸려면
 manifest와 모델 파일을 함께 검토하고 새 이미지를 발행합니다. 배포와
-rollback은 변경 불가능한 image digest 기준으로 수행합니다.
+rollback은 중앙 배포가 기록한 이전 Git commit SHA image 기준으로 수행합니다.
 
 로컬 image build 예:
 
 ```bash
 make verify-models
-make docker-build \
-  BASE_IMAGE=<team-approved-python-pytorch-image-or-digest>
+make docker-build IMAGE_NAME=vision-server:cpu-smoke
 ```
 
 저장소가 public이므로 소스와 두 모델 가중치는 누구나 내려받을 수 있습니다.

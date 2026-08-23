@@ -1,0 +1,145 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      simulate_deploy_failure:
+        description: "존재하지 않는 이미지로 롤백 테스트"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vision-production
+  cancel-in-progress: false
+
+jobs:
+  image-metadata:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      image_name: ${{ steps.image.outputs.name }}
+    steps:
+      - name: Resolve lowercase GHCR image name
+        id: image
+        shell: bash
+        env:
+          SOURCE_REPOSITORY: ${{ github.repository }}
+        run: |
+          image_name="ghcr.io/${SOURCE_REPOSITORY,,}"
+          echo "name=${image_name}" >> "$GITHUB_OUTPUT"
+
+  test-and-model-verify:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/_reusable-test.yml
+
+  build-and-push:
+    needs: [image-metadata, test-and-model-verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout source and Git-managed models
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish CPU image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ needs.image-metadata.outputs.image_name }}:${{ github.sha }}
+            ${{ needs.image-metadata.outputs.image_name }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+  request-central-deploy:
+    needs: [image-metadata, test-and-model-verify, build-and-push]
+    # 첫 GHCR package를 공개로 전환하기 전에는 image 게시까지만 수행한다.
+    # 공개 전환 후 Repository Variable을 true로 두면 이후 main 배포는 자동화된다.
+    if: >-
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      vars.VISION_CENTRAL_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout deployment request scripts
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx for anonymous image verification
+        if: needs.build-and-push.result == 'success'
+        uses: docker/setup-buildx-action@v4
+
+      - name: Verify that Kubernetes can pull the public image
+        if: needs.build-and-push.result == 'success'
+        shell: bash
+        env:
+          IMAGE_REF: ${{ needs.image-metadata.outputs.image_name }}:${{ github.sha }}
+        run: |
+          for attempt in {1..12}; do
+            if docker buildx imagetools inspect "$IMAGE_REF" >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 5
+          done
+
+          echo "::error::GHCR image를 인증 없이 조회할 수 없습니다: $IMAGE_REF"
+          echo "::error::vision_server package를 Public으로 전환한 뒤 다시 실행하세요."
+          exit 1
+
+      - name: Create Config GitHub App token
+        id: config-app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: Config
+          permission-contents: write
+
+      - name: Request Config deployment
+        env:
+          GH_TOKEN: ${{ steps.config-app-token.outputs.token }}
+          CONFIG_REPOSITORY: ${{ github.repository_owner }}/Config
+          SERVICE_NAME: vision-server
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          SOURCE_BRANCH: ${{ github.ref_name }}
+          SOURCE_COMMIT_SHA: ${{ github.sha }}
+          SOURCE_ACTOR: ${{ github.actor }}
+          SOURCE_WORKFLOW_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          IMAGE_NAME: ${{ needs.image-metadata.outputs.image_name }}
+          QUALITY_RESULT: ${{ needs.test-and-model-verify.result }}
+          COVERAGE_RESULT: not_configured
+          COVERAGE_PERCENTAGE: not_available
+          COVERAGE_THRESHOLD: not_available
+          SONAR_URL: not_available
+          BUILD_RESULT: ${{ needs.build-and-push.result }}
+          SIMULATE_FAILURE: ${{ github.event_name == 'workflow_dispatch' && inputs.simulate_deploy_failure || false }}
+        run: bash .github/scripts/config-deployment.sh

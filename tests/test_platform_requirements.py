@@ -1,6 +1,6 @@
 # 플랫폼별 의존성 파일과 Docker/Make 진입점의 정적 계약을 검증한다.
-# macOS에 CUDA wheel이 섞이지 않고 Linux는 base image의 torch를 사용하며,
-# MPS/CPU 실행 장치를 Make target에서 명시한다는 전제를 보호한다.
+# macOS에 CUDA wheel이 섞이지 않고 Linux는 공식 CPU wheel을 사용하며,
+# MPS/CPU 실행 장치를 명시한다는 전제를 보호한다.
 from __future__ import annotations
 
 from pathlib import Path
@@ -39,11 +39,22 @@ def test_cuda_build_is_not_pinned_in_common_or_macos_requirements() -> None:
         assert "--extra-index-url" not in line
 
 
-# Linux Docker 이미지가 base image의 torch를 확인하고 macOS 전용 의존성을 복사하지 않는지 검증한다.
-def test_linux_docker_requires_base_torch_and_omits_macos_profile() -> None:
+# Linux Docker 이미지가 고정 CPU runtime을 설치하고 macOS 전용 의존성을 제외하는지 검증한다.
+def test_linux_docker_installs_pinned_cpu_runtime_and_omits_macos_profile() -> None:
     dockerfile = (PROJECT_ROOT / "Dockerfile").read_text(encoding="utf-8")
 
-    assert 'RUN python -c "import torch, torchvision"' in dockerfile
+    assert "python:3.12.14-slim-bookworm@sha256:" in dockerfile
+    assert "torch==2.11.0" in dockerfile
+    assert "torchvision==0.26.0" in dockerfile
+    assert "https://download.pytorch.org/whl/cpu" in dockerfile
+    assert "libgl1" in dockerfile
+    assert "libglib2.0-0" in dockerfile
+    assert "libxcb1" in dockerfile
+    assert "groupadd" in dockerfile
+    assert "useradd" in dockerfile
+    assert "USER ${APP_UID}:${APP_GID}" in dockerfile
+    assert "assert torch.version.cuda is None" in dockerfile
+    assert "assert not torch.cuda.is_available()" in dockerfile
     assert "COPY requirements-common.txt" in dockerfile
     assert "COPY requirements-runtime.txt" in dockerfile
     assert "COPY scripts/verify_runtime_models.py" in dockerfile
@@ -65,45 +76,65 @@ def test_mac_make_targets_use_platform_profile_and_explicit_devices() -> None:
     assert "HEALTH_DEVICE=cpu $(MAKE) run" in makefile
 
 
-# 서버 실행과 Docker 빌드가 private Git 모델의 manifest 검증을 먼저 수행하는지 확인한다.
+# 서버 실행과 Docker 빌드가 Git 모델의 manifest 검증을 먼저 수행하는지 확인한다.
 def test_make_run_and_docker_build_verify_models_first() -> None:
     makefile = (PROJECT_ROOT / "Makefile").read_text(encoding="utf-8")
 
     assert "verify-models:" in makefile
     assert "$(PYTHON) scripts/verify_runtime_models.py" in makefile
     assert "run: verify-models" in makefile
-    assert "docker-build: check-base-image verify-models" in makefile
+    assert "docker-build: verify-models" in makefile
+    assert "--build-arg BASE_IMAGE" not in makefile
+    assert "--platform linux/amd64" in makefile
     assert "--file Dockerfile" in makefile
 
 
-# GHCR workflow가 최소 권한 GITHUB_TOKEN과 지정된 공식 action major를 사용하는지 검증한다.
-def test_ghcr_workflow_uses_supported_actions_and_base_image_input() -> None:
-    workflow = (
-        PROJECT_ROOT / ".github/workflows/publish-image.yml"
+# GitHub workflow가 경량 테스트와 중앙 배포 계약을 분리하는지 검증한다.
+def test_github_workflows_match_ci_and_central_deploy_contract() -> None:
+    reusable = (
+        PROJECT_ROOT / ".github/workflows/_reusable-test.yml"
+    ).read_text(encoding="utf-8")
+    develop = (
+        PROJECT_ROOT / ".github/workflows/develop-ci.yml"
+    ).read_text(encoding="utf-8")
+    pr_check = (
+        PROJECT_ROOT / ".github/workflows/pr-check.yml"
+    ).read_text(encoding="utf-8")
+    deploy = (
+        PROJECT_ROOT / ".github/workflows/deploy.yml"
     ).read_text(encoding="utf-8")
 
     for action in (
         "actions/checkout@v6",
         "actions/setup-python@v6",
-        "docker/login-action@v4",
-        "docker/metadata-action@v6",
-        "docker/setup-buildx-action@v4",
-        "docker/build-push-action@v7",
     ):
-        assert action in workflow
-    assert "contents: read" in workflow
-    assert "packages: write" in workflow
-    assert "pull_request:" in workflow
-    assert 'python-version: "3.12"' in workflow
+        assert action in reusable
+    assert 'python-version: "3.12"' in reusable
     assert (
         "python -m pip install -r requirements-common.txt "
         "-r requirements-dev.txt"
-    ) in workflow
-    assert "python -m pytest -q" in workflow
-    assert "needs: test" in workflow
-    assert "github.event_name != 'pull_request'" in workflow
-    assert "password: ${{ secrets.GITHUB_TOKEN }}" in workflow
-    assert "${{ vars.VISION_BASE_IMAGE }}" in workflow
-    assert "${{ github.event.inputs.base_image }}" in workflow
-    assert "python3 scripts/verify_runtime_models.py" in workflow
-    assert "file: Dockerfile" in workflow
+    ) in reusable
+    assert "python scripts/verify_runtime_models.py" in reusable
+    assert "python -m pytest -q" in reusable
+    assert "branches: [develop]" in develop
+    assert "branches: [develop, main]" in pr_check
+
+    for action in (
+        "actions/checkout@v6",
+        "docker/login-action@v4",
+        "docker/setup-buildx-action@v4",
+        "docker/build-push-action@v7",
+        "actions/create-github-app-token@v3",
+    ):
+        assert action in deploy
+    assert "packages: write" in deploy
+    assert "password: ${{ secrets.GITHUB_TOKEN }}" in deploy
+    assert "platforms: linux/amd64" in deploy
+    assert "${{ needs.image-metadata.outputs.image_name }}:${{ github.sha }}" in deploy
+    assert "vars.VISION_CENTRAL_DEPLOY_ENABLED == 'true'" in deploy
+    assert "docker buildx imagetools inspect" in deploy
+    assert "GHCR image를 인증 없이 조회할 수 없습니다" in deploy
+    assert "QUALITY_RESULT: ${{ needs.test-and-model-verify.result }}" in deploy
+    assert "COVERAGE_RESULT: not_configured" in deploy
+    assert "bash .github/scripts/config-deployment.sh" in deploy
+    assert "SONAR" not in reusable

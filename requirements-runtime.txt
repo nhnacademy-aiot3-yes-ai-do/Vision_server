@@ -1,7 +1,7 @@
 # Linux 컨테이너 배포용 의존성 진입점이다.
 #
-# 팀이 승인한 CPU/CUDA PyTorch BASE_IMAGE가 호환되는 torch/torchvision을
-# 이미 제공해야 한다. 이 파일 설치 과정이 해당 런타임을 macOS wheel이나
-# 승인되지 않은 CUDA build로 교체하면 안 된다.
+# Dockerfile이 공식 CPU wheel의 torch/torchvision을 먼저 고정 설치한다.
+# 이 파일은 API 공통 패키지와 모델 실행 라이브러리만 설치하며,
+# macOS wheel이나 CUDA build로 PyTorch를 교체하지 않는다.
 -r requirements-common.txt
 ultralytics==8.4.106

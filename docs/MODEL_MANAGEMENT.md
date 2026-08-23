@@ -3,11 +3,11 @@
 ## 결정된 방식
 
 Vision_server가 두 모델의 소유권과 실행 책임을 가집니다. 현재 모델은
-private Vision_server Git 저장소에서 코드와 함께 관리하고, Docker image에
-포함해 private GitHub Container Registry(GHCR)로 배포합니다.
+공개 팀 Vision_server Git 저장소에서 코드와 함께 관리하고, Docker image에
+포함해 팀 GitHub Container Registry(GHCR)로 배포합니다.
 
 ```text
-private Git repository
+public team Git repository
 ├─ runtime/models/detector/best.pt
 ├─ runtime/models/health/best.pt
 └─ models/model-manifest.json
@@ -16,9 +16,9 @@ size + SHA-256 검증
         ↓
 Vision 코드와 두 모델을 하나의 Docker image로 build
         ↓
-private GHCR package
+team GHCR package
         ↓
-배포 환경이 승인된 image digest로 pull
+배포 환경이 전체 Git commit SHA tag로 pull
 ```
 
 MinIO는 사용자 이미지 저장에만 사용합니다. 모델용 bucket이나 credential을
@@ -26,7 +26,7 @@ MinIO는 사용자 이미지 저장에만 사용합니다. 모델용 bucket이�
 
 ## 저장 위치
 
-| 역할 | private Git | Container |
+| 역할 | Team Git | Container |
 | --- | --- | --- |
 | 품종 탐지 | `runtime/models/detector/best.pt` | `/opt/mushroom-vision/runtime/models/detector/best.pt` |
 | 건강 분류 | `runtime/models/health/best.pt` | `/opt/mushroom-vision/runtime/models/health/best.pt` |
@@ -34,12 +34,10 @@ MinIO는 사용자 이미지 저장에만 사용합니다. 모델용 bucket이�
 
 `best.pt`는 Git에서 직접 검토하는 배포 입력입니다.
 로컬 `artifacts`에서 복사하거나 동일 경로에 덮어쓰는 준비 단계가 없습니다.
-private 저장소를 clone한 개발자와 CI는 같은 모델 파일을 받습니다.
+저장소를 clone한 개발자와 CI는 같은 모델 파일을 받습니다.
 
-모델 또는 Docker image를 public 저장소·public package·public release에
-게시하지 않습니다. AIHub 데이터 이용조건, 모델 재배포 조건과
-Ultralytics/PyTorch 관련 라이선스는 공개 범위를 바꾸기 전에 별도로
-확인해야 합니다.
+저장소와 모델은 현재 공개 범위로 운영합니다. AIHub 데이터 출처 표기와
+모델 재배포 조건, Ultralytics/PyTorch 관련 라이선스 고지는 계속 유지합니다.
 
 ## Manifest 계약
 
@@ -111,8 +109,8 @@ class mapping을 먼저 검증합니다. FastAPI lifespan에서는 `ModelRegistr
 4. predictor가 새 manifest 계약에서 상수를 정상 파생하는지 확인합니다.
 5. `make verify-models`와 `make test`를 실행합니다.
 6. 승인된 환경에서 실제 model registry/API smoke test를 실행합니다.
-7. PR 승인 후 새 Docker image를 build해 private GHCR에 push합니다.
-8. staging 검증을 통과한 image digest만 production에 배포합니다.
+7. PR 승인 후 새 Docker image를 build해 팀 GHCR에 push합니다.
+8. 테스트를 통과한 전체 Git commit SHA tag만 Kubernetes에 배포합니다.
 
 모델 파일과 manifest는 하나의 commit/PR에서 함께 변경해야 합니다. 둘 중
 하나만 바뀐 commit은 배포하지 않습니다.
@@ -126,10 +124,10 @@ ghcr.io/<organization>/vision-server:0.1.0-model-v1
 ```
 
 `latest`만으로 배포 대상을 지정하지 않습니다. 실제 Kubernetes 배포는
-변경 불가능한 digest를 사용합니다.
+중앙 Config가 검증한 전체 40자리 Git commit SHA tag를 사용합니다.
 
 ```text
-ghcr.io/<organization>/vision-server@sha256:<image-digest>
+ghcr.io/nhnacademy-aiot3-yes-ai-do/vision_server:<40-character-git-sha>
 ```
 
 release마다 다음을 함께 기록합니다.
@@ -138,38 +136,32 @@ release마다 다음을 함께 기록합니다.
 - detector와 health model version
 - detector와 health model SHA-256
 - 사람이 읽는 image tag
-- 실제 배포한 image digest
+- 실제 배포한 image tag와 OCI digest
 - 테스트 결과와 승인자
 
 ## rollback
 
 실행 중인 Pod의 모델 파일을 바꾸지 않습니다. 문제가 생기면 이전에 검증된
-Docker image digest로 Deployment를 되돌립니다.
+이전 정상 Git SHA image로 Deployment를 되돌립니다.
 
 ```text
-현재 digest에서 문제 확인
-→ 이전 승인 digest로 Deployment 변경
+현재 image에서 문제 확인
+→ 이전 정상 Git SHA image로 Deployment 변경
 → 새 Pod readiness 확인
 → 트래픽 전환
 ```
 
-image가 코드와 두 모델을 모두 포함하므로 이전 digest 하나만 지정하면 같은
+image가 코드와 두 모델을 모두 포함하므로 이전 SHA image 하나만 지정하면 같은
 코드·의존성·모델 조합을 재현할 수 있습니다.
 
 ## 접근 권한과 Secret
 
-- Vision_server Git repository를 private으로 유지합니다.
-- GHCR package도 private으로 유지합니다.
-- CI push 권한과 Kubernetes pull 권한은 최소 범위로 분리합니다.
-- GHCR token이나 registry credential을 Git과 `.env.example`에 넣지
-  않습니다.
-- CI 로그와 artifact에 token, 로컬 경로와 모델 binary를 별도로 노출하지
-  않습니다.
-- 배포 환경에는 image pull secret 또는 승인된 workload identity만
-  제공합니다.
-
-Git history에는 과거 모델 binary도 남습니다. 모델 배포 권한이 없는
-사용자에게 저장소 read 권한을 주지 않습니다.
+- 공개 저장소와 공개 모델에는 credential이나 사용자 데이터를 포함하지 않습니다.
+- CI의 GHCR push 권한은 image 게시 job에만 부여합니다.
+- GHCR token이나 registry credential을 Git과 `.env.example`에 넣지 않습니다.
+- CI 로그와 artifact에 token과 로컬 경로를 노출하지 않습니다.
+- GHCR package가 private으로 바뀌면 Kubernetes image pull secret을 별도로
+  구성해야 합니다.
 
 ## 향후 재검토 기준
 
@@ -182,5 +174,5 @@ Git history에는 과거 모델 binary도 남습니다. 모델 배포 권한이 
 - 모델별 접근 권한 또는 retention 정책이 필요함
 
 그전까지는 모델 두 개와 Vision 코드를 하나의 검증된 Docker image로
-배포하는 현재 방식이 기준입니다. 구조를 바꾸더라도 image digest, manifest
-무결성, private 접근 권한과 rollback 가능성은 유지해야 합니다.
+배포하는 현재 방식이 기준입니다. 구조를 바꾸더라도 immutable base digest,
+manifest 무결성과 rollback 가능성은 유지해야 합니다.

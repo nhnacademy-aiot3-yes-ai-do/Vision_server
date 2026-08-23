@@ -1,0 +1,12 @@
+name: pr-check
+
+on:
+  pull_request:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-model-verify:
+    uses: ./.github/workflows/_reusable-test.yml
