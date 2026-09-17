@@ -86,5 +86,4 @@ def create_app(
     return application
 
 
-# ASGI 서버가 `app.main:app`으로 가져갈 기본 애플리케이션 인스턴스이다.
 app = create_app()
