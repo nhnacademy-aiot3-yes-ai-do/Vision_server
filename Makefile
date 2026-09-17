@@ -2,7 +2,7 @@
 # `?=`를 사용하므로 `make run PORT=9000`처럼 호출 시 안전하게 덮어쓸 수 있다.
 PYTHON ?= python
 HOST ?= 0.0.0.0
-PORT ?= 8000
+PORT ?= 9004
 IMAGE_NAME ?= mushroom-vision-service:prototype
 
 # 실제 파일을 만드는 규칙이 아니라 명령 진입점임을 Make에 알린다.

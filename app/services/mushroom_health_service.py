@@ -324,7 +324,7 @@ class MushroomHealthService:
                 pass
             raise
         try:
-            async with self.inference_gateway.admit():
+            async with self.inference_gateway.admit(): # 다른 분석이 진행되고있는지 확인 되고있다면  429 반환
                 return await self._analyze_admitted_upload(
                     upload,
                     expected_format,
